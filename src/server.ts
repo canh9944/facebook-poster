@@ -158,10 +158,11 @@ app.post("/api/browser/stop", async (_req, res) => {
 
 app.post("/api/generate", async (req, res) => {
   try {
-    const content = await generatePost();
+    const generated = await generatePost();
 
     res.json({
-      content,
+      content: generated.content,
+      imagePath: generated.imagePath ?? null,
     });
   } catch (error) {
     res.status(500).json({
@@ -173,12 +174,15 @@ app.post("/api/generate", async (req, res) => {
 app.post("/api/test-publish", async (req, res) => {
   try {
     let content = req.body?.content;
+    let imagePath = req.body?.imagePath as string | undefined;
 
     if (!content) {
-      content = await generatePost();
+      const generated = await generatePost();
+      content = generated.content;
+      imagePath = generated.imagePath;
     }
 
-    await publishPost(content);
+    await publishPost(content, imagePath);
 
     return res.json({
       success: true,

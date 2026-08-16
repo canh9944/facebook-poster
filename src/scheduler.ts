@@ -44,25 +44,27 @@ export function startScheduler() {
     try {
       log("INFO", `Schedule triggered: ${currentTime}`);
 
-      const content = await generatePost();
+      const generated = await generatePost();
+      const content = generated.content;
 
       const result = db
         .prepare(
           `
         INSERT INTO posts (
           content,
+          image,
           scheduled_at,
           status
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, ?, ?)
       `,
         )
-        .run(content, now.toISOString(), "publishing");
+        .run(content, generated.imagePath ?? null, now.toISOString(), "publishing");
 
       const postId = result.lastInsertRowid;
 
       try {
-        await publishPost(content);
+        await publishPost(content, generated.imagePath);
 
         db.prepare(
           `

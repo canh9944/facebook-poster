@@ -259,7 +259,49 @@ async function findPostButton(page: any) {
   return null;
 }
 
-export async function publishPost(content: string) {
+async function attachImage(page: any, imagePath: string) {
+  const dialog = createPostDialog(page).first();
+  const scope = (await dialog.isVisible().catch(() => false))
+    ? dialog
+    : page;
+
+  let fileInput = scope.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+
+  if ((await fileInput.count()) === 0) {
+    const photoButton = scope
+      .getByRole("button", { name: /photo|video|ảnh/i })
+      .first();
+
+    if (await photoButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await photoButton.click();
+      await page.waitForTimeout(800);
+    }
+
+    fileInput = scope.locator('input[type="file"]').first();
+  }
+
+  if ((await fileInput.count()) === 0) {
+    fileInput = page.locator('input[type="file"]').first();
+  }
+
+  if ((await fileInput.count()) === 0) {
+    throw new Error("Facebook photo upload input was not found.");
+  }
+
+  await fileInput.setInputFiles(imagePath);
+
+  const preview = scope.locator('img[src^="blob:"], img[src*="scontent"]').first();
+  const previewVisible = await preview
+    .waitFor({ state: "visible", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!previewVisible) {
+    await page.waitForTimeout(3000);
+  }
+}
+
+export async function publishPost(content: string, imagePath?: string) {
   await startBrowser();
 
   let page = getPage();
@@ -303,6 +345,11 @@ export async function publishPost(content: string) {
   }
 
   await typeIntoComposer(page, composer, content);
+
+  if (imagePath) {
+    await attachImage(page, imagePath);
+  }
+
   await page.waitForTimeout(2000);
 
   const postButton = await findPostButton(page);
@@ -313,5 +360,14 @@ export async function publishPost(content: string) {
 
   await postButton.scrollIntoViewIfNeeded();
   await postButton.click({ force: true });
-  await page.waitForTimeout(4000);
+
+  const dialogGone = await createPostDialog(page)
+    .first()
+    .waitFor({ state: "hidden", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!dialogGone) {
+    await page.waitForTimeout(5000);
+  }
 }

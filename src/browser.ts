@@ -109,6 +109,16 @@ export async function startBrowser(profileId?: string) {
     activeProfileId = resolvedId;
     setSetting("genlogin_profile_id", resolvedId);
 
+    launchedPage.on("dialog", (dialog) => {
+      dialog.accept().catch(() => {});
+    });
+
+    launchedContext.on("page", (nextPage) => {
+      nextPage.on("dialog", (dialog) => {
+        dialog.accept().catch(() => {});
+      });
+    });
+
     log("INFO", `Connected to Genlogin profile ${resolvedId}`);
 
     await page.goto("https://www.facebook.com/", {
@@ -152,6 +162,15 @@ export async function openFacebook() {
   }
 
   const currentPage = getPage();
+  const url = currentPage.url();
+
+  if (/facebook\.com/i.test(url) && !/login|checkpoint/i.test(url)) {
+    return;
+  }
+
+  currentPage.on("dialog", (dialog) => {
+    dialog.accept().catch(() => {});
+  });
 
   await currentPage.goto("https://www.facebook.com/", {
     waitUntil: "domcontentloaded",
