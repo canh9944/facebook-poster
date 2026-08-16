@@ -1,6 +1,7 @@
 import "./env.js";
-import { startBrowser } from "./browser.js";
+import { log } from "./db.js";
 import { startScheduler } from "./scheduler.js";
+import { runPublishFlow } from "./job.js";
 import "./server.js";
 
 async function main() {
@@ -10,17 +11,10 @@ async function main() {
 ========================================
 `);
 
-  await startBrowser().catch((e) => {
-    console.error(
-      "Genlogin profile start failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-    console.error(
-      "Start the Genlogin app, then POST /api/browser/start with { \"profileId\": \"...\" }.",
-    );
-  });
-
   startScheduler();
+
+  log("INFO", "Starting full publish flow");
+  await runPublishFlow();
 }
 
 main().catch((error) => {

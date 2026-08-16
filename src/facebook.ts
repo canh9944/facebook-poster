@@ -419,7 +419,7 @@ export async function publishPost(content: string, imagePath?: string) {
     page = getPage();
   }
 
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(60_000);
 
   await dismissOverlays(page);
   await ensureLoggedIn(page);
@@ -433,7 +433,7 @@ export async function publishPost(content: string, imagePath?: string) {
   await createPostButton.scrollIntoViewIfNeeded();
   await createPostButton.click({ force: true });
 
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(4000);
 
   const composer = await findComposer(page);
 
@@ -442,11 +442,14 @@ export async function publishPost(content: string, imagePath?: string) {
   }
 
   await typeIntoComposer(page, composer, content);
+  await page.waitForTimeout(120_000);
 
   if (imagePath) {
     await attachImage(page, imagePath);
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(8000);
   }
+
+  await page.waitForTimeout(15_000);
 
   const postButton = await waitForEnabledPostButton(page, 35000);
 

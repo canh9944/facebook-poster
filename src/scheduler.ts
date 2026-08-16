@@ -1,7 +1,6 @@
 import cron from "node-cron";
 import { db, log } from "./db.js";
-import { generatePost } from "./content.js";
-import { publishPost } from "./facebook.js";
+import { runPublishFlow } from "./job.js";
 
 let running = false;
 
@@ -12,10 +11,8 @@ export function startScheduler() {
     }
 
     const now = new Date();
-
     const hour = String(now.getHours()).padStart(2, "0");
     const minute = String(now.getMinutes()).padStart(2, "0");
-
     const currentTime = `${hour}:${minute}`;
 
     const schedule = db
@@ -43,55 +40,9 @@ export function startScheduler() {
 
     try {
       log("INFO", `Schedule triggered: ${currentTime}`);
-
-      const generated = await generatePost();
-      const content = generated.content;
-
-      const result = db
-        .prepare(
-          `
-        INSERT INTO posts (
-          content,
-          image,
-          scheduled_at,
-          status
-        )
-        VALUES (?, ?, ?, ?)
-      `,
-        )
-        .run(content, generated.imagePath ?? null, now.toISOString(), "publishing");
-
-      const postId = result.lastInsertRowid;
-
-      try {
-        await publishPost(content, generated.imagePath);
-
-        db.prepare(
-          `
-          UPDATE posts
-          SET
-            status = 'published',
-            published_at = ?
-          WHERE id = ?
-        `,
-        ).run(new Date().toISOString(), postId);
-
-        log("INFO", `Post ${postId} published successfully`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        db.prepare(
-          `
-          UPDATE posts
-          SET
-            status = 'failed',
-            error = ?
-          WHERE id = ?
-        `,
-        ).run(message, postId);
-
-        log("ERROR", `Post ${postId} failed: ${message}`);
-      }
+      await runPublishFlow();
+    } catch {
+      // runPublishFlow already logs and records the failure
     } finally {
       running = false;
     }
