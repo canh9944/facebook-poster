@@ -1,5 +1,16 @@
+import "./env.js";
+
 const MODEL = "gpt-4o-mini";
-const OPENAI_API_KEY = "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";
+
+function openaiApiKey() {
+  const key = process.env.OPENAI_API_KEY?.trim();
+
+  if (!key) {
+    throw new Error("OPENAI_API_KEY is missing. Add it to the .env file.");
+  }
+
+  return key;
+}
 
 async function fetchHeadlines(url: string) {
   const response = await fetch(url, {
@@ -28,7 +39,7 @@ async function fetchHeadlines(url: string) {
 
 async function currentTrends() {
   const sources = await Promise.allSettled([
-    fetchHeadlines("https://news.google.com/rss?hl=vi&gl=VN&ceid=VN:vi"),
+    fetchHeadlines("https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     fetchHeadlines("https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en&gl=US&ceid=US:en"),
   ]);
 
@@ -48,7 +59,7 @@ export async function generatePost() {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${openaiApiKey()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -58,7 +69,7 @@ export async function generatePost() {
         {
           role: "system",
           content:
-            "You write Facebook posts in Vietnamese. First choose one timely topic from current internet trends, then write the post. Return only the post text. Keep it natural, useful, 80-150 words, with a short hook, 2-4 short paragraphs, and 2-4 relevant hashtags. Do not use markdown. Do not mention that you picked the topic from a list.",
+            "You write Facebook posts in English. First choose one timely topic from current internet trends, then write the post. Return only the post text. Keep it natural, useful, 80-150 words, with a short hook, 2-4 short paragraphs, and 2-4 relevant hashtags. Do not use markdown. Do not mention that you picked the topic from a list.",
         },
         {
           role: "user",

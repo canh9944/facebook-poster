@@ -1,3 +1,4 @@
+import "./env.js";
 import { startBrowser } from "./browser.js";
 import { startScheduler } from "./scheduler.js";
 import "./server.js";

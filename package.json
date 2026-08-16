@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "start": "tsx src/main.ts"
+    "dev": "tsx --env-file=.env src/main.ts",
+    "start": "tsx --env-file=.env src/main.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^5.1.0",
     "genlogin": "file:../lib_Genlogin_js",
     "node-cron": "^4.2.1",
