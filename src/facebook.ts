@@ -34,6 +34,8 @@ const POST_BUTTON_SKIP = [
   /ảnh/i,
   /cảm xúc/i,
   /gắn thẻ/i,
+  /next/i,
+  /tiếp/i,
 ];
 
 async function dismissOverlays(page: any) {
@@ -190,38 +192,76 @@ function normalizeLabel(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+async function clickPhotoNextIfNeeded(page: any) {
+  const dialogs = page.getByRole("dialog");
+  const count = await dialogs.count();
+
+  for (let i = count - 1; i >= 0; i--) {
+    const dialog = dialogs.nth(i);
+
+    if (!(await dialog.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const next = dialog.getByRole("button", { name: /^(next|tiếp)$/i }).last();
+
+    if (!(await next.isVisible({ timeout: 500 }).catch(() => false))) {
+      continue;
+    }
+
+    const disabled = await next.getAttribute("aria-disabled").catch(() => null);
+
+    if (disabled === "true") {
+      continue;
+    }
+
+    await next.click();
+    await page.waitForTimeout(1500);
+    return;
+  }
+}
+
+async function isButtonEnabled(button: any) {
+  const ariaDisabled = await button.getAttribute("aria-disabled").catch(() => null);
+  const disabledAttr = await button.getAttribute("disabled").catch(() => null);
+
+  return ariaDisabled !== "true" && disabledAttr === null;
+}
+
 async function findPostButton(page: any) {
+  await clickPhotoNextIfNeeded(page);
+
   const dialog = createPostDialog(page).first();
   const scope = (await dialog.isVisible().catch(() => false))
     ? dialog
     : page.locator('[role="dialog"]').last();
 
-  const named = scope.locator(
-    '[aria-label="Đăng"], [aria-label="Post"], [aria-label="Share"], [aria-label="Publish"], [aria-label="Chia sẻ"]',
-  );
+  const locators = [
+    scope.getByRole("button", { name: /^post$/i }),
+    scope.getByRole("button", { name: /^đăng$/i }),
+    scope.locator('[aria-label="Post"]'),
+    scope.locator('[aria-label="Đăng"]'),
+    scope.getByText(/^Post$/i),
+    scope.getByText(/^Đăng$/i),
+  ];
 
-  if (await named.last().isVisible({ timeout: 1000 }).catch(() => false)) {
-    const disabled = await named
-      .last()
-      .getAttribute("aria-disabled")
-      .catch(() => null);
+  for (const locator of locators) {
+    const button = locator.last();
 
-    if (disabled !== "true") {
-      return named.last();
+    if (!(await button.isVisible({ timeout: 800 }).catch(() => false))) {
+      continue;
     }
-  }
 
-  const textButton = scope.getByText(/^(Đăng|Post|Share|Publish|Chia sẻ)$/i).last();
+    const clickable = button.locator(
+      'xpath=ancestor-or-self::*[@role="button" or self::button][1]',
+    );
 
-  if (await textButton.isVisible({ timeout: 1000 }).catch(() => false)) {
-    const button = textButton.locator('xpath=ancestor-or-self::*[@role="button" or self::button][1]');
+    const target = (await clickable.isVisible().catch(() => false))
+      ? clickable
+      : button;
 
-    if (await button.isVisible().catch(() => false)) {
-      const disabled = await button.getAttribute("aria-disabled").catch(() => null);
-
-      if (disabled !== "true") {
-        return button;
-      }
+    if (await isButtonEnabled(target)) {
+      return target;
     }
   }
 
@@ -247,13 +287,25 @@ async function findPostButton(page: any) {
       continue;
     }
 
-    const disabled = await button.getAttribute("aria-disabled").catch(() => null);
+    if (await isButtonEnabled(button)) {
+      return button;
+    }
+  }
 
-    if (disabled === "true") {
-      continue;
+  return null;
+}
+
+async function waitForEnabledPostButton(page: any, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const button = await findPostButton(page);
+
+    if (button) {
+      return button;
     }
 
-    return button;
+    await page.waitForTimeout(500);
   }
 
   return null;
@@ -299,6 +351,51 @@ async function attachImage(page: any, imagePath: string) {
   if (!previewVisible) {
     await page.waitForTimeout(3000);
   }
+}
+
+function composerDialog(page: any) {
+  return page.locator('[role="dialog"]').filter({
+    has: page.locator('[contenteditable="true"], [role="textbox"]'),
+  });
+}
+
+async function clickPublishInDialog(page: any) {
+  const clicked = await page.evaluate(() => {
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')].reverse();
+
+    for (const dialog of dialogs) {
+      const buttons = [...dialog.querySelectorAll('[role="button"], button')];
+
+      for (const button of buttons) {
+        const label = (
+          button.getAttribute("aria-label") ||
+          button.textContent ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (!/^(post|đăng)$/i.test(label)) {
+          continue;
+        }
+
+        if (button.getAttribute("aria-disabled") === "true") {
+          continue;
+        }
+
+        (button as HTMLElement).click();
+        return label;
+      }
+    }
+
+    return "";
+  });
+
+  if (!clicked) {
+    throw new Error("Could not click the Facebook Post/Đăng button in the composer.");
+  }
+
+  return clicked;
 }
 
 export async function publishPost(content: string, imagePath?: string) {
@@ -348,26 +445,40 @@ export async function publishPost(content: string, imagePath?: string) {
 
   if (imagePath) {
     await attachImage(page, imagePath);
+    await page.waitForTimeout(3000);
   }
 
-  await page.waitForTimeout(2000);
-
-  const postButton = await findPostButton(page);
+  const postButton = await waitForEnabledPostButton(page, 35000);
 
   if (!postButton) {
-    throw new Error("Facebook publish button was not found.");
+    throw new Error("Facebook publish button was not found or stayed disabled.");
   }
 
-  await postButton.scrollIntoViewIfNeeded();
-  await postButton.click({ force: true });
+  await clickPublishInDialog(page).catch(async () => {
+    await postButton.scrollIntoViewIfNeeded();
+    await postButton.click({ force: true });
+  });
 
-  const dialogGone = await createPostDialog(page)
-    .first()
-    .waitFor({ state: "hidden", timeout: 20000 })
+  const openComposer = composerDialog(page).last();
+  const closed = await openComposer
+    .waitFor({ state: "hidden", timeout: 25000 })
     .then(() => true)
     .catch(() => false);
 
-  if (!dialogGone) {
-    await page.waitForTimeout(5000);
+  if (!closed && (await openComposer.isVisible().catch(() => false))) {
+    await clickPublishInDialog(page).catch(async () => {
+      const retry = await waitForEnabledPostButton(page, 5000);
+      if (retry) {
+        await retry.click({ force: true });
+      }
+    });
+
+    const stillOpen = await openComposer.isVisible().catch(() => false);
+
+    if (stillOpen) {
+      throw new Error(
+        "Publish button click did not submit the post. The composer is still open.",
+      );
+    }
   }
 }
