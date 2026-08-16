@@ -131,8 +131,6 @@ app.post("/api/generate", (req, res) => {
 
 app.post("/api/test-publish", async (req, res) => {
   try {
-    console.log("BODY:", req.body);
-
     const content = req.body?.content;
 
     if (!content) {

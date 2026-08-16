@@ -1,1 +1,4 @@
 data/facebook-profile/
+data/*.png
+data/*.db-shm
+data/*.db-wal

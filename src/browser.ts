@@ -9,20 +9,45 @@ let context: BrowserContext | null = null;
 let page: Page | null = null;
 let starting: Promise<void> | null = null;
 
+function isContextAlive() {
+  if (!context || !page) {
+    return false;
+  }
+
+  try {
+    if (page.isClosed()) {
+      context = null;
+      page = null;
+      return false;
+    }
+
+    return true;
+  } catch {
+    context = null;
+    page = null;
+    return false;
+  }
+}
+
 export async function startBrowser() {
-  if (context) {
+  if (isContextAlive()) {
     return;
   }
 
+  context = null;
+  page = null;
+
   if (starting) {
     await starting;
-    return;
+    if (isContextAlive()) {
+      return;
+    }
   }
 
   starting = (async () => {
     fs.mkdirSync(profilePath, { recursive: true });
 
-    context = await chromium.launchPersistentContext(profilePath, {
+    const launched = await chromium.launchPersistentContext(profilePath, {
       headless: false,
       viewport: {
         width: 1440,
@@ -32,7 +57,15 @@ export async function startBrowser() {
       args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
     });
 
-    page = context.pages()[0] ?? (await context.newPage());
+    launched.on("close", () => {
+      if (context === launched) {
+        context = null;
+        page = null;
+      }
+    });
+
+    context = launched;
+    page = launched.pages()[0] ?? (await launched.newPage());
 
     log("INFO", "Browser started");
 
@@ -45,20 +78,35 @@ export async function startBrowser() {
 
   try {
     await starting;
+  } catch (error) {
+    context = null;
+    page = null;
+    throw error;
   } finally {
     starting = null;
   }
 }
 
 export function getPage() {
-  if (!page) {
-    throw new Error("Browser is not started");
+  if (page && !page.isClosed()) {
+    return page;
   }
 
-  return page;
+  const live = context?.pages().find((item) => !item.isClosed());
+
+  if (live) {
+    page = live;
+    return live;
+  }
+
+  throw new Error("Browser is not started");
 }
 
 export async function openFacebook() {
+  if (!isContextAlive()) {
+    await startBrowser();
+  }
+
   const currentPage = getPage();
 
   await currentPage.goto("https://www.facebook.com/", {

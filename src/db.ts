@@ -40,11 +40,4 @@ db.exec(`
 
 export function log(level: string, message: string) {
   console.log(`[${level}] ${message}`);
-
-  db.prepare(
-    `
-    INSERT INTO logs (level, message)
-    VALUES (?, ?)
-  `,
-  ).run(level, message);
 }

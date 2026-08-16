@@ -1,5 +1,4 @@
-import { getPage, openFacebook, startBrowser } from "./browser.js";
-import { log } from "./db.js";
+import { getPage, openFacebook, startBrowser, stopBrowser } from "./browser.js";
 
 const CREATE_POST_PATTERNS = [
   /what'?s on your mind/i,
@@ -36,15 +35,6 @@ const POST_BUTTON_SKIP = [
   /cảm xúc/i,
   /gắn thẻ/i,
 ];
-
-async function saveDebug(page: any, filename: string) {
-  await page.screenshot({
-    path: `data/${filename}`,
-    fullPage: true,
-  });
-
-  console.log(`Debug screenshot saved: data/${filename}`);
-}
 
 async function dismissOverlays(page: any) {
   const overlayTexts = [
@@ -141,8 +131,6 @@ async function findComposer(page: any) {
     .catch(() => {});
 
   for (let attempt = 0; attempt < 20; attempt++) {
-    console.log(`[Composer] searching... attempt ${attempt + 1}/20`);
-
     const scope = (await dialog.first().isVisible().catch(() => false))
       ? dialog.first()
       : page.locator('[role="dialog"]').last();
@@ -168,7 +156,6 @@ async function findComposer(page: any) {
           continue;
         }
 
-        console.log("[Composer] FOUND in dialog");
         return editor;
       }
     }
@@ -240,7 +227,6 @@ async function findPostButton(page: any) {
 
   const buttons = scope.locator('[role="button"], button');
   const count = await buttons.count();
-  const labels: string[] = [];
 
   for (let i = 0; i < count; i++) {
     const button = buttons.nth(i);
@@ -252,8 +238,6 @@ async function findPostButton(page: any) {
     const label = normalizeLabel(
       `${(await button.getAttribute("aria-label").catch(() => "")) || ""} ${(await button.innerText().catch(() => "")) || ""}`,
     );
-
-    labels.push(label);
 
     if (!label || POST_BUTTON_SKIP.some((skip) => skip.test(label))) {
       continue;
@@ -272,21 +256,30 @@ async function findPostButton(page: any) {
     return button;
   }
 
-  console.log("[PostButton] visible labels:", labels.filter(Boolean).slice(-20));
-
   return null;
 }
 
 export async function publishPost(content: string) {
   await startBrowser();
 
-  const page = getPage();
+  let page = getPage();
 
-  await openFacebook();
-  await page.waitForLoadState("domcontentloaded");
+  try {
+    await openFacebook();
+    page = getPage();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (!/closed|Target page/i.test(message)) {
+      throw error;
+    }
+
+    await stopBrowser().catch(() => {});
+    await startBrowser();
+    await openFacebook();
+    page = getPage();
+  }
   await page.waitForTimeout(2500);
-
-  log("INFO", `Facebook URL: ${page.url()}`);
 
   await dismissOverlays(page);
   await ensureLoggedIn(page);
@@ -294,45 +287,30 @@ export async function publishPost(content: string) {
   const createPostButton = await findCreatePostButton(page);
 
   if (!createPostButton) {
-    await saveDebug(page, "facebook-create-post-debug.png");
     throw new Error("Facebook Create Post button was not found.");
   }
 
-  log("INFO", "Create Post button found");
-
   await createPostButton.scrollIntoViewIfNeeded();
   await createPostButton.click({ force: true });
-  log("INFO", "Create Post clicked");
 
   await page.waitForTimeout(1500);
 
   const composer = await findComposer(page);
 
   if (!composer) {
-    await saveDebug(page, "facebook-composer-debug.png");
     throw new Error("Facebook post composer was not found.");
   }
 
-  log("INFO", "Composer found");
-
   await typeIntoComposer(page, composer, content);
-  log("INFO", "Content entered");
-
   await page.waitForTimeout(800);
 
   const postButton = await findPostButton(page);
 
   if (!postButton) {
-    await saveDebug(page, "facebook-post-button-debug.png");
     throw new Error("Facebook publish button was not found.");
   }
 
-  log("INFO", "Publish button found");
-
   await postButton.scrollIntoViewIfNeeded();
   await postButton.click({ force: true });
-  log("INFO", "Publish button clicked");
-
   await page.waitForTimeout(4000);
-  log("INFO", "Publish flow completed");
 }
