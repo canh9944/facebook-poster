@@ -9,7 +9,7 @@ async function main() {
 ========================================
 `);
 
-  startBrowser().catch((e) => {
+  await startBrowser().catch((e) => {
     console.error(
       "Browser start failed:",
       e instanceof Error ? e.message : String(e),

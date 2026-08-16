@@ -7,32 +7,47 @@ const profilePath = path.resolve("data/facebook-profile");
 
 let context: BrowserContext | null = null;
 let page: Page | null = null;
+let starting: Promise<void> | null = null;
 
 export async function startBrowser() {
   if (context) {
     return;
   }
 
-  fs.mkdirSync(profilePath, { recursive: true });
+  if (starting) {
+    await starting;
+    return;
+  }
 
-  context = await chromium.launchPersistentContext(profilePath, {
-    headless: false,
-    viewport: {
-      width: 1440,
-      height: 900,
-    },
-    args: ["--start-maximized"],
-  });
+  starting = (async () => {
+    fs.mkdirSync(profilePath, { recursive: true });
 
-  page = context.pages()[0] ?? (await context.newPage());
+    context = await chromium.launchPersistentContext(profilePath, {
+      headless: false,
+      viewport: {
+        width: 1440,
+        height: 900,
+      },
+      locale: "vi-VN",
+      args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
+    });
 
-  log("INFO", "Browser started");
+    page = context.pages()[0] ?? (await context.newPage());
 
-  await page.goto("https://www.facebook.com/", {
-    waitUntil: "domcontentloaded",
-  });
+    log("INFO", "Browser started");
 
-  log("INFO", "Facebook opened");
+    await page.goto("https://www.facebook.com/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    log("INFO", "Facebook opened");
+  })();
+
+  try {
+    await starting;
+  } finally {
+    starting = null;
+  }
 }
 
 export function getPage() {
