@@ -1,5 +1,5 @@
 const MODEL = "gpt-4o-mini";
-const API_KEY = "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";
+const OPENAI_API_KEY = "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";
 
 async function fetchHeadlines(url: string) {
   const response = await fetch(url, {
@@ -48,7 +48,7 @@ export async function generatePost() {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

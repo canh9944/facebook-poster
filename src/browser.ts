@@ -1,13 +1,12 @@
-import { chromium, BrowserContext, Page } from "playwright";
-import path from "node:path";
-import fs from "node:fs";
-import { log } from "./db.js";
+import { chromium, Browser, BrowserContext, Page } from "playwright";
+import { getSetting, log, setSetting } from "./db.js";
+import { listProfiles, startProfile, stopProfile } from "./genlogin.js";
 
-const profilePath = path.resolve("data/facebook-profile");
-
+let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let starting: Promise<void> | null = null;
+let activeProfileId: string | null = null;
 
 function isContextAlive() {
   if (!context || !page) {
@@ -16,6 +15,7 @@ function isContextAlive() {
 
   try {
     if (page.isClosed()) {
+      browser = null;
       context = null;
       page = null;
       return false;
@@ -23,51 +23,93 @@ function isContextAlive() {
 
     return true;
   } catch {
+    browser = null;
     context = null;
     page = null;
     return false;
   }
 }
 
-export async function startBrowser() {
-  if (isContextAlive()) {
+async function resolveProfileId(profileId?: string) {
+  const resolved =
+    profileId ||
+    process.env.GENLOGIN_PROFILE_ID ||
+    getSetting("genlogin_profile_id");
+
+  if (resolved) {
+    return String(resolved);
+  }
+
+  const { profiles } = await listProfiles();
+  const first = profiles[0];
+
+  if (!first?.id) {
+    throw new Error(
+      "No Genlogin profiles found. Create a profile in the Genlogin app, then retry.",
+    );
+  }
+
+  log("INFO", `No profile configured; using first Genlogin profile ${first.id}`);
+
+  return String(first.id);
+}
+
+export function getActiveProfileId() {
+  return activeProfileId;
+}
+
+export function isBrowserRunning() {
+  return isContextAlive();
+}
+
+export async function startBrowser(profileId?: string) {
+  const resolvedId = await resolveProfileId(profileId);
+
+  if (isContextAlive() && activeProfileId === resolvedId) {
     return;
   }
 
+  if (isContextAlive() && activeProfileId !== resolvedId) {
+    await stopBrowser();
+  }
+
+  browser = null;
   context = null;
   page = null;
 
   if (starting) {
     await starting;
-    if (isContextAlive()) {
+    if (isContextAlive() && activeProfileId === resolvedId) {
       return;
     }
   }
 
   starting = (async () => {
-    fs.mkdirSync(profilePath, { recursive: true });
+    const { wsEndpoint } = await startProfile(resolvedId);
 
-    const launched = await chromium.launchPersistentContext(profilePath, {
-      headless: false,
-      viewport: {
-        width: 1440,
-        height: 900,
-      },
-      locale: "vi-VN",
-      args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
-    });
+    const connected = await chromium.connectOverCDP(wsEndpoint);
 
-    launched.on("close", () => {
-      if (context === launched) {
+    connected.on("disconnected", () => {
+      if (browser === connected) {
+        browser = null;
         context = null;
         page = null;
+        activeProfileId = null;
       }
     });
 
-    context = launched;
-    page = launched.pages()[0] ?? (await launched.newPage());
+    const launchedContext = connected.contexts()[0] ?? (await connected.newContext());
+    const launchedPage =
+      launchedContext.pages().find((item) => !item.isClosed()) ??
+      (await launchedContext.newPage());
 
-    log("INFO", "Browser started");
+    browser = connected;
+    context = launchedContext;
+    page = launchedPage;
+    activeProfileId = resolvedId;
+    setSetting("genlogin_profile_id", resolvedId);
+
+    log("INFO", `Connected to Genlogin profile ${resolvedId}`);
 
     await page.goto("https://www.facebook.com/", {
       waitUntil: "domcontentloaded",
@@ -79,8 +121,10 @@ export async function startBrowser() {
   try {
     await starting;
   } catch (error) {
+    browser = null;
     context = null;
     page = null;
+    activeProfileId = null;
     throw error;
   } finally {
     starting = null;
@@ -115,14 +159,27 @@ export async function openFacebook() {
 }
 
 export async function stopBrowser() {
-  if (!context) {
-    return;
+  const profileId = activeProfileId;
+
+  if (browser) {
+    await browser.close().catch(() => {});
   }
 
-  await context.close();
-
+  browser = null;
   context = null;
   page = null;
+  activeProfileId = null;
+
+  if (profileId) {
+    await stopProfile(profileId).catch((error) => {
+      log(
+        "ERROR",
+        `Failed to stop Genlogin profile ${profileId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
 
   log("INFO", "Browser stopped");
 }

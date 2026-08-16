@@ -1,9 +1,15 @@
 import express from "express";
 import cors from "cors";
 import { db } from "./db.js";
-import { startBrowser, stopBrowser } from "./browser.js";
+import {
+  getActiveProfileId,
+  isBrowserRunning,
+  startBrowser,
+  stopBrowser,
+} from "./browser.js";
 import { publishPost } from "./facebook.js";
 import { generatePost } from "./content.js";
+import { listProfiles, listRunningProfiles } from "./genlogin.js";
 
 const app = express();
 
@@ -13,7 +19,34 @@ app.use(express.json());
 app.get("/api/status", (_req, res) => {
   res.json({
     running: true,
+    browserRunning: isBrowserRunning(),
+    profileId: getActiveProfileId(),
   });
+});
+
+app.get("/api/genlogin/profiles", async (_req, res) => {
+  try {
+    const result = await listProfiles();
+
+    res.json({
+      ...result,
+      activeProfileId: getActiveProfileId(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.get("/api/genlogin/running", async (_req, res) => {
+  try {
+    res.json(await listRunningProfiles());
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 app.get("/api/schedules", (_req, res) => {
@@ -97,12 +130,15 @@ app.get("/api/logs", (_req, res) => {
   res.json(logs);
 });
 
-app.post("/api/browser/start", async (_req, res) => {
+app.post("/api/browser/start", async (req, res) => {
   try {
-    await startBrowser();
+    const profileId = req.body?.profileId;
+
+    await startBrowser(profileId ? String(profileId) : undefined);
 
     res.json({
       success: true,
+      profileId: getActiveProfileId(),
     });
   } catch (error) {
     res.status(500).json({

@@ -280,7 +280,7 @@ export async function publishPost(content: string) {
     page = getPage();
   }
 
-  await page.waitForTimeout(60_000);
+  await page.waitForTimeout(3000);
 
   await dismissOverlays(page);
   await ensureLoggedIn(page);
@@ -303,7 +303,7 @@ export async function publishPost(content: string) {
   }
 
   await typeIntoComposer(page, composer, content);
-  await page.waitForTimeout(120_000);
+  await page.waitForTimeout(2000);
 
   const postButton = await findPostButton(page);
 

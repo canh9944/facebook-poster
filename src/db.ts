@@ -36,7 +36,36 @@ db.exec(`
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
+
+export function getSetting(key: string) {
+  const row = db
+    .prepare(
+      `
+    SELECT value
+    FROM settings
+    WHERE key = ?
+  `,
+    )
+    .get(key) as { value: string } | undefined;
+
+  return row?.value;
+}
+
+export function setSetting(key: string, value: string) {
+  db.prepare(
+    `
+    INSERT INTO settings (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `,
+  ).run(key, value);
+}
 
 export function log(level: string, message: string) {
   console.log(`[${level}] ${message}`);

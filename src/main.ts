@@ -11,8 +11,11 @@ async function main() {
 
   await startBrowser().catch((e) => {
     console.error(
-      "Browser start failed:",
+      "Genlogin profile start failed:",
       e instanceof Error ? e.message : String(e),
+    );
+    console.error(
+      "Start the Genlogin app, then POST /api/browser/start with { \"profileId\": \"...\" }.",
     );
   });
 
