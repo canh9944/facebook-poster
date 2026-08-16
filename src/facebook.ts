@@ -279,7 +279,8 @@ export async function publishPost(content: string) {
     await openFacebook();
     page = getPage();
   }
-  await page.waitForTimeout(2500);
+
+  await page.waitForTimeout(60_000);
 
   await dismissOverlays(page);
   await ensureLoggedIn(page);
@@ -302,7 +303,7 @@ export async function publishPost(content: string) {
   }
 
   await typeIntoComposer(page, composer, content);
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(120_000);
 
   const postButton = await findPostButton(page);
 

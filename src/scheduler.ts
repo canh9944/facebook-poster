@@ -44,9 +44,7 @@ export function startScheduler() {
     try {
       log("INFO", `Schedule triggered: ${currentTime}`);
 
-      const topic = "AI và công nghệ";
-
-      const content = generatePost(topic);
+      const content = await generatePost();
 
       const result = db
         .prepare(

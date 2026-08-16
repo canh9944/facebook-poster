@@ -119,25 +119,26 @@ app.post("/api/browser/stop", async (_req, res) => {
   });
 });
 
-app.post("/api/generate", (req, res) => {
-  const topic = req.body.topic || "AI và công nghệ";
+app.post("/api/generate", async (req, res) => {
+  try {
+    const content = await generatePost();
 
-  const content = generatePost(topic);
-
-  res.json({
-    content,
-  });
+    res.json({
+      content,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 app.post("/api/test-publish", async (req, res) => {
   try {
-    const content = req.body?.content;
+    let content = req.body?.content;
 
     if (!content) {
-      return res.status(400).json({
-        error: "Content is required",
-        body: req.body,
-      });
+      content = await generatePost();
     }
 
     await publishPost(content);
