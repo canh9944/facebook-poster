@@ -29,19 +29,54 @@ function extractWsEndpoint(result: any): string {
   );
 }
 
-export async function listProfiles(offset = 0, limit = 1000) {
-  const result = await client.getProfiles(offset, limit);
+function normalizeProfiles(result: any): GenloginProfile[] {
+  const list =
+    result?.profiles ||
+    result?.data?.profiles ||
+    result?.data?.items ||
+    result?.items ||
+    [];
 
-  if (!result?.profiles) {
+  return list.map((profile: any) => ({
+    ...profile,
+    name:
+      profile.name ||
+      profile.profile_data?.name ||
+      profile.profileData?.name,
+  }));
+}
+
+export async function listProfiles(offset = 0, limit = 1000) {
+  try {
+    const result = await client.getProfiles(offset, limit);
+    const profiles = normalizeProfiles(result);
+
+    if (profiles.length) {
+      return {
+        profiles,
+        pagination: result?.pagination,
+      };
+    }
+  } catch {
+    // Fall through to the local Genlogin API.
+  }
+
+  const local = await fetch(
+    `${LOCAL_URL}?offset=${offset}&limit=${limit}`,
+  ).then((res) => res.json());
+
+  const profiles = normalizeProfiles(local);
+
+  if (!profiles.length) {
     throw new Error(
-      result?.message ||
+      local?.message ||
         "Could not load Genlogin profiles. Is the Genlogin app running on localhost:55550?",
     );
   }
 
-  return result as {
-    profiles: GenloginProfile[];
-    pagination: unknown;
+  return {
+    profiles,
+    pagination: local?.data?.pagination ?? local?.pagination,
   };
 }
 

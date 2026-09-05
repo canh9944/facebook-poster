@@ -1,52 +1,42 @@
 import cron from "node-cron";
-import { db, log } from "./db.js";
-import { runPublishFlow } from "./job.js";
+import { log } from "./db.js";
+import { runAllAccounts } from "./job.js";
 
 let running = false;
 
+async function runScheduledPublish(reason: string) {
+  if (running) {
+    log("INFO", `Skipping ${reason}; a publish run is already in progress`);
+    return;
+  }
+
+  running = true;
+
+  try {
+    log("INFO", reason);
+    await runAllAccounts();
+  } catch (error) {
+    log(
+      "ERROR",
+      `Scheduled publish failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  } finally {
+    running = false;
+  }
+}
+
 export function startScheduler() {
-  cron.schedule("* * * * *", async () => {
-    if (running) {
-      return;
-    }
+  cron.schedule(
+    "0 */5 * * *",
+    () => {
+      void runScheduledPublish("Cron: posting for all accounts (every 5 hours)");
+    },
+    {
+      timezone: "Asia/Ho_Chi_Minh",
+    },
+  );
 
-    const now = new Date();
-    const hour = String(now.getHours()).padStart(2, "0");
-    const minute = String(now.getMinutes()).padStart(2, "0");
-    const currentTime = `${hour}:${minute}`;
-
-    const schedule = db
-      .prepare(
-        `
-      SELECT *
-      FROM schedules
-      WHERE time = ?
-        AND enabled = 1
-    `,
-      )
-      .get(currentTime) as
-      | {
-          id: number;
-          time: string;
-          enabled: number;
-        }
-      | undefined;
-
-    if (!schedule) {
-      return;
-    }
-
-    running = true;
-
-    try {
-      log("INFO", `Schedule triggered: ${currentTime}`);
-      await runPublishFlow();
-    } catch {
-      // runPublishFlow already logs and records the failure
-    } finally {
-      running = false;
-    }
-  });
-
-  log("INFO", "Scheduler started");
+  log("INFO", "Scheduler started: every 5 hours at minute 0 (Asia/Ho_Chi_Minh)");
 }

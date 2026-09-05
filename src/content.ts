@@ -197,14 +197,46 @@ async function generateImage(prompt: string) {
   throw new Error(`OpenAI image API error: ${lastError}`);
 }
 
+async function topicTrends(topic: string) {
+  const query = encodeURIComponent(topic);
+  const sources = await Promise.allSettled([
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`,
+    ),
+    currentTrends(),
+  ]);
+
+  return sources
+    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .filter(Boolean)
+    .slice(0, 16);
+}
+
+const POST_ANGLES = [
+  "a small personal story",
+  "a practical everyday tip",
+  "a question for friends",
+  "a warm observation",
+  "a recommendation",
+  "something funny from daily life",
+];
+
 export async function generatePost(options?: {
   forceImage?: boolean;
+  topic?: string;
+  previousPosts?: string[];
 }): Promise<GeneratedPost> {
-  const trends = await currentTrends();
+  const topic = options?.topic?.trim() || "everyday life";
+  const trends = await topicTrends(topic);
   const today = new Date().toISOString().slice(0, 10);
+  const angle = POST_ANGLES[Math.floor(Math.random() * POST_ANGLES.length)];
   const trendList = trends.length
     ? trends.map((item, index) => `${index + 1}. ${item}`).join("\n")
     : "(no live headlines available)";
+  const previous = (options?.previousPosts || [])
+    .slice(0, 8)
+    .map((item, index) => `${index + 1}. ${item.slice(0, 180)}`)
+    .join("\n");
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -214,17 +246,23 @@ export async function generatePost(options?: {
     },
     body: JSON.stringify({
       model: TEXT_MODEL,
-      temperature: 0.9,
+      temperature: 1,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content:
-            'You write Facebook posts in English like a normal person, not a brand or a news bot. No emojis, no icons, no decorative symbols, no markdown. Avoid stock phrases like stay tuned, major news, unleashes, or revolutionize. Use contractions and a casual tone. Choose one timely topic from current internet trends, then write the post. Decide whether the post needs an image. News, weather, products, events, places, and visual stories need an image. Return JSON only: {"content":"facebook post text only","needsImage":true,"imagePrompt":"short prompt for a natural-looking phone photo with no text, logos, watermarks, or UI, or empty string"}. content must be 80-150 words, 2-4 short paragraphs, and 2-4 hashtags.',
+            'You write Facebook posts in English like a normal person, not a brand or a news bot. No emojis, no icons, no decorative symbols, no markdown. Avoid stock phrases like stay tuned, major news, unleashes, or revolutionize. Use contractions and a casual tone. Stay on the given topic. Each post must be different from previous posts. Return JSON only: {"content":"facebook post text only","needsImage":true,"imagePrompt":"short prompt for a natural-looking phone photo with no text, logos, watermarks, or UI, or empty string"}. content must be 80-150 words, 2-4 short paragraphs, and 2-4 hashtags related to the topic.',
         },
         {
           role: "user",
-          content: `Today is ${today}. Choose one current internet trend from these live headlines and return JSON for a Facebook post:\n\n${trendList}`,
+          content: `Today is ${today}. Write a new Facebook post about this topic: ${topic}.
+Use this angle: ${angle}.
+You may take light inspiration from these headlines, but the post must be about ${topic}, not random news:
+${trendList}
+
+Do not repeat or closely rewrite these previous posts:
+${previous || "(none)"}`,
         },
       ],
     }),
@@ -263,7 +301,7 @@ export async function generatePost(options?: {
 
   const imagePrompt =
     parsed.imagePrompt?.trim() ||
-    `Casual phone photo related to this post, natural lighting, no text, no watermark, no logo: ${content.slice(0, 180)}`;
+    `Casual phone photo about ${topic}, natural lighting, no text, no watermark, no logo`;
 
   const imagePath = await generateImage(imagePrompt);
 

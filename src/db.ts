@@ -23,6 +23,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content TEXT NOT NULL,
     image TEXT,
+    account TEXT,
     scheduled_at TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     published_at TEXT,
@@ -42,6 +43,12 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+try {
+  db.exec("ALTER TABLE posts ADD COLUMN account TEXT");
+} catch {
+  // Column already exists on newer databases.
+}
 
 export function getSetting(key: string) {
   const row = db

@@ -8,14 +8,25 @@ import {
   startBrowser,
   stopBrowser,
 } from "./browser.js";
-import { publishPost } from "./facebook.js";
+import { loadAccounts } from "./accounts.js";
 import { generatePost } from "./content.js";
 import { listProfiles, listRunningProfiles } from "./genlogin.js";
+import { publishPost } from "./facebook.js";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.get("/api/accounts", (_req, res) => {
+  try {
+    res.json(loadAccounts());
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
 
 app.get("/api/status", (_req, res) => {
   res.json({
@@ -158,7 +169,10 @@ app.post("/api/browser/stop", async (_req, res) => {
 
 app.post("/api/generate", async (req, res) => {
   try {
-    const generated = await generatePost();
+    const generated = await generatePost({
+      topic: req.body?.topic,
+      forceImage: Boolean(req.body?.forceImage),
+    });
 
     res.json({
       content: generated.content,
@@ -177,7 +191,10 @@ app.post("/api/test-publish", async (req, res) => {
     let imagePath = req.body?.imagePath as string | undefined;
 
     if (!content) {
-      const generated = await generatePost();
+      const generated = await generatePost({
+        topic: req.body?.topic,
+        forceImage: true,
+      });
       content = generated.content;
       imagePath = generated.imagePath;
     }

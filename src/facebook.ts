@@ -1,4 +1,5 @@
 import { getPage, openFacebook, startBrowser, stopBrowser } from "./browser.js";
+import { log } from "./db.js";
 
 const CREATE_POST_PATTERNS = [
   /what'?s on your mind/i,
@@ -14,8 +15,6 @@ const POST_BUTTON_PATTERNS = [
   /^post$/i,
   /^đăng$/i,
   /^publish$/i,
-  /^chia sẻ$/i,
-  /^share$/i,
 ];
 
 const POST_BUTTON_SKIP = [
@@ -295,6 +294,12 @@ async function findPostButton(page: any) {
   return null;
 }
 
+function composerDialog(page: any) {
+  return page.locator('[role="dialog"]').filter({
+    has: page.locator('[contenteditable="true"], [role="textbox"]'),
+  });
+}
+
 async function waitForEnabledPostButton(page: any, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
 
@@ -312,70 +317,108 @@ async function waitForEnabledPostButton(page: any, timeoutMs = 30000) {
 }
 
 async function attachImage(page: any, imagePath: string) {
-  const dialog = createPostDialog(page).first();
+  const dialog = composerDialog(page).last();
   const scope = (await dialog.isVisible().catch(() => false))
     ? dialog
-    : page;
+    : page.locator('[role="dialog"]').last();
 
-  let fileInput = scope.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+  const photoButton = scope.locator(
+    '[aria-label="Photo/video"], [aria-label="Photo/Video"], [aria-label="Ảnh/video"], [aria-label="Ảnh/Video"]',
+  ).first();
 
-  if ((await fileInput.count()) === 0) {
-    const photoButton = scope
-      .getByRole("button", { name: /photo|video|ảnh/i })
-      .first();
+  if (await photoButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await photoButton.click().catch(() => {});
+    await page.waitForTimeout(800);
+  }
 
-    if (await photoButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await photoButton.click();
-      await page.waitForTimeout(800);
+  const inputs = scope.locator('input[type="file"]');
+  await inputs
+    .first()
+    .waitFor({ state: "attached", timeout: 8000 })
+    .catch(() => {});
+
+  let uploaded = false;
+  const inputCount = await inputs.count();
+
+  for (let i = 0; i < inputCount; i++) {
+    const input = inputs.nth(i);
+    const accept = ((await input.getAttribute("accept").catch(() => "")) || "").toLowerCase();
+
+    if (accept && !/image|png|jpe?g|webp|\*/i.test(accept)) {
+      continue;
     }
 
-    fileInput = scope.locator('input[type="file"]').first();
+    try {
+      await input.setInputFiles(imagePath);
+      uploaded = true;
+      break;
+    } catch {
+      // Try the next file input in the composer.
+    }
   }
 
-  if ((await fileInput.count()) === 0) {
-    fileInput = page.locator('input[type="file"]').first();
+  if (!uploaded) {
+    const fallback = page.locator('input[type="file"]').last();
+    await fallback.setInputFiles(imagePath);
   }
 
-  if ((await fileInput.count()) === 0) {
-    throw new Error("Facebook photo upload input was not found.");
-  }
+  const previewOk = await scope
+    .evaluate(() => {
+      const images = [...document.querySelectorAll('[role="dialog"] img')];
 
-  await fileInput.setInputFiles(imagePath);
+      return images.some((img) => {
+        const src = img.getAttribute("src") || "";
+        const rect = img.getBoundingClientRect();
 
-  const preview = scope.locator('img[src^="blob:"], img[src*="scontent"]').first();
-  const previewVisible = await preview
-    .waitFor({ state: "visible", timeout: 20000 })
-    .then(() => true)
+        if (src.startsWith("blob:") && rect.width > 80) {
+          return true;
+        }
+
+        return src.includes("scontent") && rect.width > 140 && rect.height > 140;
+      });
+    })
     .catch(() => false);
 
-  if (!previewVisible) {
-    await page.waitForTimeout(3000);
-  }
-}
+  if (!previewOk) {
+    await page.waitForTimeout(4000);
+    const retryPreview = await scope
+      .evaluate(() => {
+        const images = [...document.querySelectorAll('[role="dialog"] img')];
+        return images.some((img) => {
+          const src = img.getAttribute("src") || "";
+          const rect = img.getBoundingClientRect();
+          return (
+            (src.startsWith("blob:") && rect.width > 80) ||
+            (src.includes("scontent") && rect.width > 140)
+          );
+        });
+      })
+      .catch(() => false);
 
-function composerDialog(page: any) {
-  return page.locator('[role="dialog"]').filter({
-    has: page.locator('[contenteditable="true"], [role="textbox"]'),
-  });
+    if (!retryPreview) {
+      throw new Error("Image was selected but Facebook did not show a photo preview.");
+    }
+  }
+
+  log("INFO", "Photo attached in composer");
+  await clickPhotoNextIfNeeded(page);
 }
 
 async function clickPublishInDialog(page: any) {
   const clicked = await page.evaluate(() => {
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
     const dialogs = [...document.querySelectorAll('[role="dialog"]')].reverse();
 
     for (const dialog of dialogs) {
       const buttons = [...dialog.querySelectorAll('[role="button"], button')];
 
       for (const button of buttons) {
-        const label = (
-          button.getAttribute("aria-label") ||
-          button.textContent ||
-          ""
-        )
-          .replace(/\s+/g, " ")
-          .trim();
+        const aria = normalize(button.getAttribute("aria-label") || "");
+        const text = normalize((button as HTMLElement).innerText || "");
+        const isPost =
+          /^(post|đăng|publish)$/.test(aria) || /^(post|đăng|publish)$/.test(text);
 
-        if (!/^(post|đăng)$/i.test(label)) {
+        if (!isPost) {
           continue;
         }
 
@@ -383,8 +426,9 @@ async function clickPublishInDialog(page: any) {
           continue;
         }
 
+        (button as HTMLElement).scrollIntoView({ block: "center" });
         (button as HTMLElement).click();
-        return label;
+        return aria || text;
       }
     }
 
@@ -395,11 +439,16 @@ async function clickPublishInDialog(page: any) {
     throw new Error("Could not click the Facebook Post/Đăng button in the composer.");
   }
 
+  log("INFO", `Clicked publish button (${clicked})`);
   return clicked;
 }
 
-export async function publishPost(content: string, imagePath?: string) {
-  await startBrowser();
+export async function publishPost(
+  content: string,
+  imagePath?: string,
+  profileId?: string,
+) {
+  await startBrowser(profileId);
 
   let page = getPage();
 
@@ -414,7 +463,7 @@ export async function publishPost(content: string, imagePath?: string) {
     }
 
     await stopBrowser().catch(() => {});
-    await startBrowser();
+    await startBrowser(profileId);
     await openFacebook();
     page = getPage();
   }
@@ -442,35 +491,36 @@ export async function publishPost(content: string, imagePath?: string) {
   }
 
   await typeIntoComposer(page, composer, content);
-  await page.waitForTimeout(120_000);
 
-  if (imagePath) {
-    await attachImage(page, imagePath);
-    await page.waitForTimeout(8000);
+  if (!imagePath) {
+    throw new Error("No image was generated for this post.");
   }
 
-  await page.waitForTimeout(15_000);
+  await attachImage(page, imagePath);
+  await page.waitForTimeout(8_000);
+  await page.waitForTimeout(60_000);
 
-  const postButton = await waitForEnabledPostButton(page, 35000);
+  const postButton = await waitForEnabledPostButton(page, 45000);
 
   if (!postButton) {
     throw new Error("Facebook publish button was not found or stayed disabled.");
   }
 
   await clickPublishInDialog(page).catch(async () => {
+    log("INFO", "DOM publish click missed, retrying with Playwright click");
     await postButton.scrollIntoViewIfNeeded();
     await postButton.click({ force: true });
   });
 
   const openComposer = composerDialog(page).last();
-  const closed = await openComposer
+  const stillVisible = await openComposer
     .waitFor({ state: "hidden", timeout: 25000 })
-    .then(() => true)
-    .catch(() => false);
+    .then(() => false)
+    .catch(async () => openComposer.isVisible().catch(() => true));
 
-  if (!closed && (await openComposer.isVisible().catch(() => false))) {
+  if (stillVisible) {
     await clickPublishInDialog(page).catch(async () => {
-      const retry = await waitForEnabledPostButton(page, 5000);
+      const retry = await waitForEnabledPostButton(page, 8000);
       if (retry) {
         await retry.click({ force: true });
       }
@@ -484,4 +534,6 @@ export async function publishPost(content: string, imagePath?: string) {
       );
     }
   }
+
+  log("INFO", "Composer closed after publish");
 }

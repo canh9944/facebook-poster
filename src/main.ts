@@ -1,7 +1,7 @@
 import "./env.js";
 import { log } from "./db.js";
 import { startScheduler } from "./scheduler.js";
-import { runPublishFlow } from "./job.js";
+import { runAllAccounts } from "./job.js";
 import "./server.js";
 
 async function main() {
@@ -13,8 +13,8 @@ async function main() {
 
   startScheduler();
 
-  log("INFO", "Starting full publish flow");
-  await runPublishFlow();
+  log("INFO", "Starting publish flow for all accounts");
+  await runAllAccounts();
 }
 
 main().catch((error) => {
