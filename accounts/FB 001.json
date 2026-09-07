@@ -1,5 +1,23 @@
 {
   "name": "FB 001",
-  "topic": "pet",
-  "enabled": true
+  "topic": "us-news",
+  "enabled": true,
+  "pageDna": "A US Facebook page about the hottest news and drama from the last few days, and real events in US history. Sounds like a regular person talking, not a news anchor or a textbook. Specific, sometimes funny, never a lecture.",
+  "pillars": [
+    "hottest US news from the last few days",
+    "celebrity and pop-culture drama",
+    "viral moments people are arguing about",
+    "on this day in US history",
+    "famous American historical events",
+    "the strange or dramatic moments that built the country"
+  ],
+  "emotions": [
+    "wait, this just happened",
+    "I cannot believe this is real",
+    "I forgot this happened",
+    "that's wild for American history",
+    "everyone is talking about this",
+    "curiosity"
+  ],
+  "imageStyle": "Photorealistic scene matching the post. Current news: generic setting or crowd. History: period-accurate American scene or place. No recognizable celebrity, politician, or historical portrait. Short readable summary of the post on the image, no watermark, no logo, no split screen, no collage"
 }

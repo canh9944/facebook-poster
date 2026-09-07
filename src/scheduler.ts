@@ -1,4 +1,3 @@
-import cron from "node-cron";
 import { log } from "./db.js";
 import { runAllAccounts } from "./job.js";
 
@@ -28,15 +27,11 @@ async function runScheduledPublish(reason: string) {
 }
 
 export function startScheduler() {
-  cron.schedule(
-    "0 */5 * * *",
-    () => {
-      void runScheduledPublish("Cron: posting for all accounts (every 5 hours)");
-    },
-    {
-      timezone: "Asia/Ho_Chi_Minh",
-    },
-  );
+  const hourMs = 60 * 60 * 1000;
 
-  log("INFO", "Scheduler started: every 5 hours at minute 0 (Asia/Ho_Chi_Minh)");
+  setInterval(() => {
+    void runScheduledPublish("Hourly: posting for all accounts");
+  }, hourMs);
+
+  log("INFO", "Scheduler started: first post on launch, then every 1 hour");
 }

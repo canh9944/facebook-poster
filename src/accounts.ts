@@ -7,6 +7,11 @@ export type AccountConfig = {
   topic: string;
   enabled?: boolean;
   profileId?: string;
+  imageStyle?: string;
+  source?: "original" | "rewrite-real-stories";
+  pageDna?: string;
+  pillars?: string[];
+  emotions?: string[];
 };
 
 const accountsDir = path.resolve("accounts");
@@ -34,6 +39,17 @@ export function loadAccounts(): AccountConfig[] {
       topic: String(parsed.topic).trim(),
       enabled: parsed.enabled !== false,
       profileId: parsed.profileId ? String(parsed.profileId) : undefined,
+      imageStyle: parsed.imageStyle ? String(parsed.imageStyle).trim() : undefined,
+      source: (parsed.source === "rewrite-real-stories"
+        ? "rewrite-real-stories"
+        : "original") as AccountConfig["source"],
+      pageDna: parsed.pageDna ? String(parsed.pageDna).trim() : undefined,
+      pillars: Array.isArray(parsed.pillars)
+        ? parsed.pillars.map((item) => String(item).trim()).filter(Boolean)
+        : undefined,
+      emotions: Array.isArray(parsed.emotions)
+        ? parsed.emotions.map((item) => String(item).trim()).filter(Boolean)
+        : undefined,
     };
   });
 

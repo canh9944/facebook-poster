@@ -1,5 +1,23 @@
 {
   "name": "FB 002",
   "topic": "family",
-  "enabled": true
+  "enabled": true,
+  "pageDna": "A funny family page that compares family life in the old days with family life now. One specific contrast per post. Interesting and funny. Never a lecture about kids these days.",
+  "pillars": [
+    "family dinner then vs phones at the table now",
+    "one house phone vs everyone on a smartphone",
+    "playing outside until streetlights vs staying inside",
+    "getting lost and asking a stranger vs GPS",
+    "Saturday morning cartoons vs streaming",
+    "handwritten notes and landlines vs group chats",
+    "grandparents' rules vs parenting now"
+  ],
+  "emotions": [
+    "that's exactly my childhood",
+    "family humor",
+    "I forgot we used to do that",
+    "now vs then is ridiculous",
+    "recognition"
+  ],
+  "imageStyle": "One photorealistic American family photo matching the then-vs-now contrast, either an old-days home scene or a nowadays home scene, natural light, plus a short readable summary of the post on the image, no split screen, no collage, no watermark, no logo"
 }

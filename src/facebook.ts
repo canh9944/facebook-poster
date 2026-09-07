@@ -9,6 +9,7 @@ const CREATE_POST_PATTERNS = [
   /write something/i,
   /viết gì đó/i,
   /you think/i,
+  /nghĩ gì/i,
 ];
 
 const POST_BUTTON_PATTERNS = [
@@ -119,8 +120,40 @@ async function findCreatePostButton(page: any) {
 
 function createPostDialog(page: any) {
   return page.getByRole("dialog").filter({
-    hasText: /tạo bài viết|create (a )?post|create post/i,
+    hasText:
+      /tạo bài viết|create (a )?post|create post|what's on your mind|bạn đang nghĩ gì|write something|viết gì/i,
   });
+}
+
+async function findVisibleEditor(scope: any) {
+  const editors = scope.locator(
+    '[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]',
+  );
+  const count = await editors.count();
+  let fallback = null;
+
+  for (let i = 0; i < count; i++) {
+    const editor = editors.nth(i);
+
+    if (!(await editor.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const aria =
+      `${(await editor.getAttribute("aria-label").catch(() => "")) || ""} ${(await editor.getAttribute("aria-placeholder").catch(() => "")) || ""}`;
+
+    if (/search|tìm|comment|bình luận|message|tin nhắn|chat/i.test(aria)) {
+      continue;
+    }
+
+    if (/mind|nghĩ|create post|tạo bài|write something|viết/i.test(aria)) {
+      return editor;
+    }
+
+    fallback = fallback || editor;
+  }
+
+  return fallback;
 }
 
 async function findComposer(page: any) {
@@ -128,36 +161,44 @@ async function findComposer(page: any) {
 
   await dialog
     .first()
-    .waitFor({ state: "visible", timeout: 10000 })
+    .waitFor({ state: "visible", timeout: 15000 })
     .catch(() => {});
 
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const scope = (await dialog.first().isVisible().catch(() => false))
-      ? dialog.first()
-      : page.locator('[role="dialog"]').last();
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const namedDialog = dialog.first();
 
-    if (await scope.isVisible().catch(() => false)) {
-      const dialogEditors = scope.locator(
-        '[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]',
-      );
+    if (await namedDialog.isVisible().catch(() => false)) {
+      const editor = await findVisibleEditor(namedDialog);
 
-      const count = await dialogEditors.count();
-
-      for (let i = 0; i < count; i++) {
-        const editor = dialogEditors.nth(i);
-
-        if (!(await editor.isVisible().catch(() => false))) {
-          continue;
-        }
-
-        const aria =
-          (await editor.getAttribute("aria-label").catch(() => "")) || "";
-
-        if (/search|tìm/i.test(aria)) {
-          continue;
-        }
-
+      if (editor) {
         return editor;
+      }
+    }
+
+    const dialogs = page.locator('[role="dialog"]');
+    const dialogCount = await dialogs.count();
+
+    for (let i = dialogCount - 1; i >= 0; i -= 1) {
+      const current = dialogs.nth(i);
+
+      if (!(await current.isVisible().catch(() => false))) {
+        continue;
+      }
+
+      const editor = await findVisibleEditor(current);
+
+      if (editor) {
+        return editor;
+      }
+    }
+
+    const pageEditor = await findVisibleEditor(page);
+
+    if (pageEditor) {
+      const box = await pageEditor.boundingBox().catch(() => null);
+
+      if (box && box.height >= 36 && box.width >= 120) {
+        return pageEditor;
       }
     }
 
@@ -174,7 +215,20 @@ async function typeIntoComposer(page: any, composer: any, content: string) {
 
   await page.keyboard.press("Control+A").catch(() => {});
   await page.waitForTimeout(100);
-  await page.keyboard.insertText(content);
+  await page.keyboard.press("Backspace").catch(() => {});
+
+  const lines = content.replace(/\r/g, "").split("\n");
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i]) {
+      await page.keyboard.insertText(lines[i]);
+    }
+
+    if (i < lines.length - 1) {
+      await page.keyboard.press("Enter");
+    }
+  }
+
   await page.waitForTimeout(800);
 
   const typed = await composer
@@ -183,6 +237,7 @@ async function typeIntoComposer(page: any, composer: any, content: string) {
 
   if (!typed) {
     await composer.click();
+    await page.keyboard.press("Control+A").catch(() => {});
     await page.keyboard.type(content, { delay: 20 });
   }
 }
@@ -482,9 +537,17 @@ export async function publishPost(
   await createPostButton.scrollIntoViewIfNeeded();
   await createPostButton.click({ force: true });
 
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(5000);
 
-  const composer = await findComposer(page);
+  let composer = await findComposer(page);
+
+  if (!composer) {
+    log("INFO", "Composer not found after first click, retrying Create Post");
+    await dismissOverlays(page);
+    await createPostButton.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(4000);
+    composer = await findComposer(page);
+  }
 
   if (!composer) {
     throw new Error("Facebook post composer was not found.");
@@ -536,4 +599,6 @@ export async function publishPost(
   }
 
   log("INFO", "Composer closed after publish");
+  log("INFO", "Waiting a few seconds before closing the browser");
+  await page.waitForTimeout(8_000);
 }

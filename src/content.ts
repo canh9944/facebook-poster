@@ -1,14 +1,82 @@
 import "./env.js";
 import fs from "node:fs";
 import path from "node:path";
+import { log } from "./db.js";
 
-const TEXT_MODEL = "gpt-4o-mini";
+const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-4o-mini";
 const IMAGE_MODEL = "gpt-image-2";
+const FALLBACK_IMAGE_MODEL = "gpt-image-1";
+
 const imageDir = path.resolve("data/generated-images");
 
 export type GeneratedPost = {
   content: string;
   imagePath?: string;
+};
+
+type PostFormat =
+  | "relatable"
+  | "funny"
+  | "useful"
+  | "POV"
+  | "question"
+  | "nostalgia"
+  | "emotional"
+  | "observation"
+  | "list"
+  | "before_after"
+  | "unexpected";
+
+type InspirationSource =
+  | "reddit"
+  | "pinterest"
+  | "historical"
+  | "old_products"
+  | "old_tv"
+  | "90s_culture"
+  | "us_news"
+  | "us_history";
+
+type HookMechanism =
+  | "recognition"
+  | "curiosity"
+  | "specific_detail"
+  | "identity"
+  | "confession"
+  | "unexpected"
+  | "nostalgia"
+  | "observation";
+
+type PageDna = {
+  identity: string;
+  pillars: string[];
+  emotions: string[];
+  inspirationSources: InspirationSource[];
+  formats: PostFormat[];
+  hookMechanisms: HookMechanism[];
+  imageStrategy: string;
+  allowEmojis: boolean;
+  useHashtags: boolean;
+  minWords: number;
+  maxWords: number;
+  lengthGuide: string;
+  hookRule: string;
+};
+
+type GeneratedContent = {
+  contentIdea: string;
+  hookMechanism: HookMechanism;
+  emotionalTrigger: string;
+  payoff: string;
+  content: string;
+  imageQuote: string;
+  needsImage: boolean;
+  imagePrompt: string;
+};
+
+type RealStory = {
+  title: string;
+  body: string;
 };
 
 function openaiApiKey() {
@@ -21,59 +89,1621 @@ function openaiApiKey() {
   return key;
 }
 
-async function fetchHeadlines(url: string) {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "facebook-auto-poster/1.0",
-    },
-  });
+/**
+ * ---------------------------------------------------------
+ * TEXT HELPERS
+ * ---------------------------------------------------------
+ */
 
-  if (!response.ok) {
-    return [];
-  }
-
-  const text = await response.text();
-  const titles = [...text.matchAll(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/gi)].map(
-    (match) =>
-      match[1]
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .trim(),
-  );
-
-  return titles.slice(1, 12);
-}
-
-async function currentTrends() {
-  const sources = await Promise.allSettled([
-    fetchHeadlines("https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
-    fetchHeadlines("https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en&gl=US&ceid=US:en"),
-  ]);
-
-  return sources
-    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
-    .filter(Boolean)
-    .slice(0, 20);
-}
-
-function stripEmojis(text: string) {
+function cleanText(text: string) {
   return text
-    .replace(/\p{Extended_Pictographic}/gu, "")
-    .replace(/[\uFE0F\u200D]/g, "")
+    .replace(/\r/g, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/  +/g, " ")
     .trim();
 }
 
+function stripEmojis(text: string) {
+  return cleanText(
+    text
+      .replace(/\p{Extended_Pictographic}/gu, "")
+      .replace(/[\uFE0F\u200D]/g, ""),
+  );
+}
+
+function removeHashtags(text: string) {
+  return cleanText(text.replace(/#[\p{L}\p{N}_]+/gu, ""));
+}
+
+function extractHashtags(text: string) {
+  return [...text.matchAll(/#[\p{L}\p{N}_]+/gu)].map(
+    (match) => match[0],
+  );
+}
+
+const GENERIC_HASHTAGS = new Set(
+  [
+    "lifechangingmoment",
+    "blessed",
+    "gratefulheart",
+    "mondaymotivation",
+    "goodvibesonly",
+    "lovethis",
+    "instagood",
+    "viral",
+    "mustread",
+    "deepthoughts",
+    "lifelessons",
+    "lifelesson",
+    "bekind",
+    "staypositive",
+    "thoughtoftheday",
+    "heartwarming",
+    "emotional",
+    "relatablecontent",
+    "storytime",
+    "dailymotivation",
+    "positivevibes",
+    "nevergiveup",
+    "trusttheprocess",
+    "livingmybestlife",
+    "selflove",
+    "mindfulliving",
+    "blessedlife",
+    "photooftheday",
+    "instadaily",
+    "motivationalquotes",
+    "inspiration",
+    "inspirational",
+    "wisdom",
+    "lifeadvice",
+    "todayslesson",
+    "foodforthought",
+    "somethingtothinkabout",
+    "realtalk",
+    "deep",
+    "feelings",
+    "love",
+    "life",
+    "happy",
+    "sad",
+    "mood",
+    "vibes",
+    "blessedandgrateful",
+    "makingmemories",
+    "cherisheverymoment",
+    "liveinthemoment",
+  ].map((tag) => tag.toLowerCase()),
+);
+
+function isGenericHashtag(tag: string) {
+  const raw = tag.replace(/^#/, "");
+  const normalized = raw.toLowerCase();
+
+  if (GENERIC_HASHTAGS.has(normalized)) {
+    return true;
+  }
+
+  const humps = raw.match(/[A-Z][a-z]+/g) || [];
+
+  if (humps.length >= 4) {
+    return true;
+  }
+
+  return raw.length > 22;
+}
+
+export function putHashtagsOnOwnLine(text: string) {
+  const kept = [...new Set(extractHashtags(text))]
+    .filter((tag) => !isGenericHashtag(tag))
+    .slice(0, 4);
+
+  const body = removeHashtags(text);
+
+  if (!kept.length) {
+    return body;
+  }
+
+  return `${body}\n\n${kept.join(" ")}`;
+}
+
+function splitSentences(text: string) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function splitIntoParagraphs(body: string) {
+  const existing = body
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (existing.length >= 2) {
+    return existing;
+  }
+
+  const sentences = splitSentences(existing[0] || body);
+
+  if (sentences.length <= 1) {
+    return sentences.length ? sentences : [body.trim()].filter(Boolean);
+  }
+
+  if (sentences.length <= 3) {
+    return sentences;
+  }
+
+  const hook = sentences[0];
+  const payoff = sentences[sentences.length - 1];
+  const middle = sentences.slice(1, -1);
+
+  if (middle.length >= 4) {
+    const cut = Math.ceil(middle.length / 2);
+    return [
+      hook,
+      middle.slice(0, cut).join(" "),
+      middle.slice(cut).join(" "),
+      payoff,
+    ];
+  }
+
+  return [hook, middle.join(" "), payoff];
+}
+
+function ensureParagraphBreaks(text: string) {
+  const tags = [...new Set(extractHashtags(text))]
+    .filter((tag) => !isGenericHashtag(tag))
+    .slice(0, 4);
+  const body = removeHashtags(text);
+  const paragraphs = splitIntoParagraphs(body);
+
+  if (!paragraphs.length) {
+    return tags.length ? tags.join(" ") : "";
+  }
+
+  const formatted = paragraphs.join("\n\n");
+
+  if (!tags.length) {
+    return formatted;
+  }
+
+  return `${formatted}\n\n${tags.join(" ")}`;
+}
+
+function normalizePostContent(
+  text: string,
+  options: {
+    allowEmojis: boolean;
+    useHashtags: boolean;
+  },
+) {
+  let result = cleanText(text.replace(/\\n/g, "\n"));
+
+  if (!options.allowEmojis) {
+    result = stripEmojis(result);
+  }
+
+  if (!options.useHashtags) {
+    result = removeHashtags(result);
+    return ensureParagraphBreaks(result);
+  }
+
+  return ensureParagraphBreaks(putHashtagsOnOwnLine(result));
+}
+
+function wordCount(text: string) {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function hasGenericAIPhrase(text: string) {
+  const patterns = [
+    /^so,?\s+picture this/i,
+    /^let me tell you/i,
+    /^you won't believe/i,
+    /^you know what that means/i,
+    /of course,? i had to/i,
+    /and that's when/i,
+    /here's the thing/i,
+    /at the end of the day/i,
+    /little did i know/i,
+    /i couldn't believe/i,
+    /who else can relate/i,
+    /can anyone else relate/i,
+    /steal (my|the) spotlight/i,
+    /sense of shame/i,
+    /furry spy/i,
+    /knee-deep in/i,
+    /lounging like/i,
+    /that classic/i,
+    /main character/i,
+    /the audacity/i,
+    /if i can'?t see you/i,
+    /caught in 4k/i,
+    /it'?s giving\b/i,
+    /\bbuddy,\s/i,
+  ];
+
+  return patterns.some((pattern) => pattern.test(text.trim()));
+}
+
+function sentenceCount(text: string) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 8).length;
+}
+
+function firstSentence(text: string) {
+  return (
+    text
+      .split(/(?<=[.!?])\s+/)
+      .map((part) => part.trim())
+      .find(Boolean) || text.trim()
+  );
+}
+
+function firstParagraph(text: string) {
+  return text.split(/\n\s*\n/)[0]?.trim() || text.trim();
+}
+
+function validateGeneratedPost(
+  content: string,
+  rules: {
+    minWords: number;
+    maxWords: number;
+    shortFunnyHook?: boolean;
+  },
+) {
+  const body = removeHashtags(content);
+  const words = wordCount(body);
+  const sentences = sentenceCount(body);
+  const tags = [...new Set(extractHashtags(content))];
+  const genericTags = tags.filter((tag) => isGenericHashtag(tag));
+  const hook = firstParagraph(body);
+  const hookWords = wordCount(hook);
+  const hookSentences = sentenceCount(hook);
+
+  if (words < rules.minWords || sentences < 3) {
+    return {
+      valid: false,
+      reason:
+        "Post needs hook → actual point/story → payoff. One relatable sentence is not enough.",
+    };
+  }
+
+  if (words > rules.maxWords) {
+    return {
+      valid: false,
+      reason: `Post is too long. Keep it under ${rules.maxWords} words.`,
+    };
+  }
+
+  if (hookSentences !== 1 || hookWords < 4 || hookWords > 18) {
+    return {
+      valid: false,
+      reason:
+        "Start with one catching sentence on its own first line, related to the post, that creates curiosity to read more. Do not dump the whole story in the opening.",
+    };
+  }
+
+  if (hasGenericAIPhrase(body)) {
+    return {
+      valid: false,
+      reason: "Post starts or relies on a generic AI-style phrase.",
+    };
+  }
+
+  if (tags.length < 2 || tags.length > 4) {
+    return {
+      valid: false,
+      reason:
+        "Post must end with 2-4 relevant hashtags on their own last line.",
+    };
+  }
+
+  if (genericTags.length) {
+    return {
+      valid: false,
+      reason: `Hashtags are too generic or AI-generated (${genericTags.join(" ")}). Use specific tags that match the post.`,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "",
+  };
+}
+
+/**
+ * ---------------------------------------------------------
+ * RANDOM HELPERS
+ * ---------------------------------------------------------
+ */
+
+function pick<T>(items: T[]): T {
+  if (!items.length) {
+    throw new Error("Cannot pick from an empty array.");
+  }
+
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function shuffle<T>(items: T[]) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function numbered(items: string[]) {
+  return items
+    .map((item, index) => `${index + 1}. ${item}`)
+    .join("\n");
+}
+
+/**
+ * ---------------------------------------------------------
+ * NEWS / TREND SOURCES
+ * ---------------------------------------------------------
+ */
+
+async function fetchHeadlines(url: string): Promise<string[]> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "facebook-auto-poster/1.0",
+      },
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const text = await response.text();
+
+    const titles = [
+      ...text.matchAll(
+        /<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/gi,
+      ),
+    ]
+      .map((match) =>
+        match[1]
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .trim(),
+      )
+      .filter(Boolean);
+
+    return titles.slice(1, 12);
+  } catch {
+    return [];
+  }
+}
+
+async function topicTrends(topic: string) {
+  const query = encodeURIComponent(topic);
+
+  const sources = await Promise.allSettled([
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`,
+    ),
+  ]);
+
+  return sources
+    .flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    )
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+async function collectUSNewsDrama() {
+  const threeDay = encodeURIComponent(
+    'US (news OR viral OR drama OR celebrity) when:3d',
+  );
+
+  const [top, entertainment, recent, news, entertainmentReddit, pop, fauxmoi] =
+    await Promise.allSettled([
+      fetchHeadlines(
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+      ),
+      fetchHeadlines(
+        "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en",
+      ),
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${threeDay}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+      fetchRedditStories("news", 0),
+      fetchRedditStories("entertainment", 0),
+      fetchRedditStories("popculturechat", 0),
+      fetchRedditStories("FauxMoi", 0),
+    ]);
+
+  const headlines: string[] = [];
+
+  for (const result of [top, entertainment, recent]) {
+    if (result.status === "fulfilled") {
+      headlines.push(...result.value);
+    }
+  }
+
+  for (const result of [news, entertainmentReddit, pop, fauxmoi]) {
+    if (result.status === "fulfilled") {
+      headlines.push(
+        ...result.value.map((story) => story.title).filter(Boolean),
+      );
+    }
+  }
+
+  const unique = headlines.filter(
+    (title, index, list) =>
+      title &&
+      list.findIndex((item) => item === title) === index,
+  );
+
+  return shuffle(unique).slice(0, 10);
+}
+
+const US_HISTORY_EVENTS = [
+  "1776: The Declaration of Independence is adopted in Philadelphia",
+  "1863: Lincoln delivers the Gettysburg Address",
+  "1869: The transcontinental railroad is completed at Promontory Summit",
+  "1920: The 19th Amendment gives American women the right to vote",
+  "1929: The stock market crash starts the Great Depression",
+  "1941: Japan attacks Pearl Harbor and the US enters World War II",
+  "1955: Rosa Parks refuses to give up her seat in Montgomery",
+  "1963: Martin Luther King Jr. delivers the I Have a Dream speech",
+  "1969: Apollo 11 lands on the moon",
+  "1974: President Nixon resigns after Watergate",
+  "1980: Mount St. Helens erupts in Washington",
+  "1986: The Challenger space shuttle breaks apart after launch",
+  "2001: September 11 attacks in New York, Washington, and Pennsylvania",
+  "2008: Barack Obama is elected the first Black president of the United States",
+];
+
+async function collectUSHistoryEvents() {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const onThisDay = now.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+  });
+
+  const [wiki, googleToday, googleHistory] = await Promise.allSettled([
+    fetch(
+      `https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}`,
+      {
+        headers: {
+          "User-Agent": "facebook-auto-poster/1.0",
+          Accept: "application/json",
+        },
+      },
+    ).then(async (response) => {
+      if (!response.ok) {
+        return [] as string[];
+      }
+
+      const data = (await response.json()) as {
+        selected?: Array<{ text?: string; year?: number }>;
+        events?: Array<{ text?: string; year?: number }>;
+      };
+
+      const events = [
+        ...(data.selected || []),
+        ...(data.events || []),
+      ];
+
+      return events
+        .filter((event) =>
+          /united states|u\.s\.|american|usa|washington|lincoln|congress|pearl harbor|civil rights|apollo|constitution/i.test(
+            `${event.year || ""} ${event.text || ""}`,
+          ),
+        )
+        .map((event) =>
+          `${event.year}: ${String(event.text || "").trim()}`.trim(),
+        )
+        .filter((line) => line.length > 12);
+    }),
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(
+        `"on this day" ${onThisDay} United States history`,
+      )}&hl=en-US&gl=US&ceid=US:en`,
+    ),
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(
+        "US history this week OR American historical event",
+      )}&hl=en-US&gl=US&ceid=US:en`,
+    ),
+  ]);
+
+  const lines: string[] = [...US_HISTORY_EVENTS];
+
+  for (const result of [wiki, googleToday, googleHistory]) {
+    if (result.status === "fulfilled") {
+      lines.push(...result.value);
+    }
+  }
+
+  const unique = lines.filter(
+    (title, index, list) =>
+      title &&
+      list.findIndex((item) => item === title) === index,
+  );
+
+  return shuffle(unique).slice(0, 10);
+}
+
+/**
+ * ---------------------------------------------------------
+ * PAGE DNA
+ * ---------------------------------------------------------
+ */
+
+const PAGE_DNA: Record<string, PageDna> = {
+  "us-news": {
+    identity:
+      "A US Facebook page about two things: the hottest news and drama from the last few days, and real events in US history. Sounds like a regular person talking, not a news anchor or a textbook. Specific, sometimes funny, never a lecture.",
+
+    pillars: [
+      "hottest US news from the last few days",
+      "celebrity and pop-culture drama",
+      "viral moments people are arguing about",
+      "on this day in US history",
+      "famous American historical events",
+      "the strange or dramatic moments that built the country",
+    ],
+
+    emotions: [
+      "wait, this just happened",
+      "I cannot believe this is real",
+      "I forgot this happened",
+      "that's wild for American history",
+      "everyone is talking about this",
+      "curiosity",
+    ],
+
+    inspirationSources: ["us_news", "us_history"],
+
+    formats: [
+      "observation",
+      "funny",
+      "unexpected",
+      "question",
+      "relatable",
+      "nostalgia",
+    ],
+
+    hookMechanisms: [
+      "curiosity",
+      "unexpected",
+      "specific_detail",
+      "observation",
+      "nostalgia",
+    ],
+
+    imageStrategy:
+      "A photorealistic image matching the post. For current news: a setting, crowd, city, object, or generic scene. For history: a period-accurate American scene, object, or place. Do not depict a recognizable real celebrity, politician, or historical portrait. Overlay a short readable summary of the post on the photo. No logos, watermarks, collage, or split screen.",
+
+    allowEmojis: false,
+    useHashtags: true,
+    minWords: 40,
+    maxWords: 150,
+    lengthGuide:
+      "Usually 50-120 words. Stay tight. Facebook reaction, not an article or a textbook.",
+    hookRule:
+      "Start with one catching sentence, on its own first line, that is about this exact story and makes people need to tap See more. Create urge and curiosity. Do not spoil the whole post in the first line. Then tell what happened. Then a payoff. For current news, the hook teases today's story. For history, the hook teases a real US event without dumping the textbook version first.",
+  },
+
+  pet: {
+    identity:
+      "A funny pet page that sounds like a real owner texting a friend. Everyday chaos with a dog or cat. Specific and a little messy. The laugh comes from what the pet actually did, not wordplay.",
+
+    pillars: [
+      "funny things pets do that owners recognize immediately",
+      "everyday pet chaos",
+      "the girl-and-pet power struggle",
+      "pets acting like they run the house",
+      "tiny rituals that go sideways",
+      "the weird logic of living with a dog or cat",
+    ],
+
+    emotions: [
+      "that's exactly my dog",
+      "that's exactly my cat",
+      "amusement",
+      "annoyed but laughing",
+      "love mixed with everyday chaos",
+    ],
+
+    inspirationSources: [
+      "reddit",
+      "pinterest",
+    ],
+
+    formats: [
+      "funny",
+      "funny",
+      "unexpected",
+      "observation",
+      "relatable",
+    ],
+
+    hookMechanisms: [
+      "unexpected",
+      "specific_detail",
+      "recognition",
+      "observation",
+    ],
+
+    imageStrategy:
+      "One authentic-looking candid smartphone photo in an ordinary American home or neighborhood. Natural window light, imperfect composition, a funny or mid-action pet moment. When the story involves the woman and pet, both should naturally appear in the same photograph. A short readable quote related to the post must appear on the photo. Avoid polished commercial photography.",
+
+    allowEmojis: false,
+    useHashtags: true,
+    minWords: 30,
+    maxWords: 90,
+    lengthGuide:
+      "Keep it short. Usually 40-70 words. 30-90 is the range. Do not pad. Talk like a person, not a caption.",
+    hookRule:
+      "First line is a short, plain, funny observation. Then say what the pet did, in normal words. Last line is a dry laugh, not a punchline. Do not write Instagram-caption wordplay. Do not talk to the pet like a stand-up closer.",
+  },
+
+  family: {
+    identity:
+      "A funny American family page that compares family life in the old days with family life now. One specific contrast per post: dinner, phones, weekends, chores, TV, getting in trouble, calling friends, privacy, road trips. Interesting and funny. Never a lecture about kids these days.",
+
+    pillars: [
+      "family dinner then vs phones at the table now",
+      "one house phone vs everyone on a smartphone",
+      "playing outside until streetlights vs staying inside",
+      "getting lost and asking a stranger vs GPS",
+      "Saturday morning cartoons vs streaming",
+      "handwritten notes and landlines vs group chats",
+      "grandparents' rules vs parenting now",
+    ],
+
+    emotions: [
+      "that's exactly my childhood",
+      "family humor",
+      "I forgot we used to do that",
+      "now vs then is ridiculous",
+      "recognition",
+    ],
+
+    inspirationSources: [
+      "historical",
+      "old_products",
+      "old_tv",
+      "90s_culture",
+    ],
+
+    formats: [
+      "before_after",
+      "before_after",
+      "funny",
+      "nostalgia",
+      "observation",
+    ],
+
+    hookMechanisms: [
+      "nostalgia",
+      "specific_detail",
+      "recognition",
+      "unexpected",
+      "observation",
+    ],
+
+    imageStrategy:
+      "One photorealistic American family photo matching the contrast in the post, either an old-days home scene or a nowadays home scene. Natural light, slightly imperfect framing. Overlay a short readable summary of the post in large text. No split screen, no collage, no logos, no watermarks.",
+
+    allowEmojis: false,
+    useHashtags: true,
+    minWords: 50,
+    maxWords: 180,
+    lengthGuide:
+      "Usually 70-140 words. Enough to show then and now. Never pad.",
+    hookRule:
+      "Start with one catching sentence, on its own first line, about this specific then-vs-now family contrast. It should make people curious to read the rest. Then show how it worked in the old days, how it works now, and land on a funny recognition. Do not moralize. Do not say the past was simply better.",
+  },
+
+  nostalgia: {
+    identity:
+      "A nostalgia page for Americans who remember life before smartphones and social media. The content should trigger recognition through concrete objects, routines, sounds, places, and small memories rather than generic statements about 'the good old days'.",
+
+    pillars: [
+      "80s and 90s childhood",
+      "old technology",
+      "old television",
+      "school memories",
+      "family routines",
+      "shopping and entertainment before smartphones",
+      "things today's kids will never understand",
+    ],
+
+    emotions: [
+      "I remember this",
+      "I forgot about that",
+      "missing a simpler routine",
+      "shared childhood memory",
+      "generational recognition",
+      "warm nostalgia",
+      "surprise",
+    ],
+
+    inspirationSources: [
+      "historical",
+      "old_products",
+      "old_tv",
+      "90s_culture",
+      "reddit",
+    ],
+
+    formats: [
+      "nostalgia",
+      "observation",
+      "question",
+      "relatable",
+      "list",
+      "before_after",
+      "unexpected",
+    ],
+
+    hookMechanisms: [
+      "nostalgia",
+      "specific_detail",
+      "recognition",
+      "identity",
+      "curiosity",
+      "observation",
+    ],
+
+    imageStrategy:
+      "Authentic-looking American nostalgia photography. Specific period details matter: old electronics, family rooms, school supplies, stores, cars, kitchens, toys, or neighborhood scenes. A short readable quote related to the memory must appear on the photo. Avoid generic fake vintage filters.",
+
+    allowEmojis: false,
+    useHashtags: true,
+    minWords: 50,
+    maxWords: 200,
+    lengthGuide:
+      "Usually 80-160 words. Up to 200 words when the memory needs room. Never pad.",
+    hookRule:
+      "Open with a concrete object, routine, or place from the old days. Then tell the memory. Funny recognition is better than a sad lecture.",
+  },
+};
+
+const PET_VOICE_RULES = `
+PET PAGE VOICE (required)
+
+Write like a real person posting about their dog or cat. Dry. Specific. A little annoyed. Funny because the situation is true.
+
+Do this:
+- Say what the pet did in plain words.
+- Use short sentences.
+- Leave the joke in the situation. Do not explain it.
+- Last line can be dry. It should not sound like a punchline.
+
+Do not do this:
+- Instagram caption energy
+- Talking to the pet with a closer ("Buddy, the only thing undercover...")
+- Metaphors (furry spy, ninja, little gremlin, chaos goblin)
+- Quoted "classic looks"
+- Words like spotlight, undercover, shame, main character, audacity, caught in 4K
+- Trying to be clever instead of funny
+
+Bad:
+POV: I'm knee-deep in cleaning when I spot Max the cat, lounging like a furry spy, staring at me with that classic "If I can't see you, you can't see me" look. Buddy, the only thing undercover here is your sense of shame while you steal my spotlight!
+
+Good:
+
+He was behind the curtain with his butt still out.
+
+I was wiping the counter. He sat there like I couldn't see him.
+
+I can see you. The curtain is see-through.
+`;
+
+const NEWS_VOICE_RULES = `
+US NEWS / DRAMA PAGE VOICE (required)
+
+Write about the hottest real US news or drama from the last few days.
+
+Pick ONE story from the provided headlines.
+Talk like a person on Facebook who just saw it, not a reporter.
+
+Do this:
+- Start with one catching sentence on its own first line. Related to this story. Makes people curious to read more.
+- Name the situation clearly enough that people know what you mean.
+- Stay current. This week, not last year.
+- Be specific. What happened, who is involved at a high level, why people care.
+- A reaction, a question, or a dry joke is the payoff.
+- If details are thin, do not invent them.
+
+Do not do this:
+- Fake breaking news
+- Pretend you were there
+- Write a news article
+- Copy a headline as the whole post
+- Lecture, moralize, or do a "what we can learn"
+- Mention Reddit, Google News, or sources
+`;
+
+const HISTORY_VOICE_RULES = `
+US HISTORY PAGE VOICE (required)
+
+Write about a real event in United States history.
+
+Pick ONE event from the provided list.
+Talk like a person on Facebook who just remembered it or just learned it, not a teacher.
+
+Do this:
+- Start with one catching sentence on its own first line. Related to this event. Makes people curious to read more.
+- Name the event and when it happened in the story, not necessarily in the first line.
+- Say what actually happened, in plain words.
+- Make it feel specific: a place, a detail, a turn.
+- Payoff can be a reaction, a question, or why it still feels wild.
+- If details are thin, do not invent them.
+
+Do not do this:
+- Invent history
+- Write a textbook paragraph
+- Lecture or moralize
+- Pretend you were there unless the event is being told as public history
+- Mention Wikipedia, Google, or sources
+`;
+
+const FAMILY_THEN_NOW_VOICE_RULES = `
+FAMILY THEN VS NOW VOICE (required)
+
+Write about one interesting comparison between family life in the old days and family life now.
+
+Do this:
+- Start with one catching sentence on its own first line. Related to this then-vs-now contrast. Makes people curious to read more.
+- Pick one specific thing: dinner, the phone, weekends, chores, TV, getting in trouble, calling a friend, car trips, privacy, bedtime.
+- Show how it worked then, in a concrete scene.
+- Show how it works now, in a concrete scene.
+- Make the contrast funny or interesting. The laugh is in the difference.
+- People should think "that's so true."
+
+Do not do this:
+- A generic "kids these days" rant
+- Saying the past was simply better
+- A sad lecture
+- Comparing ten things in one post
+- Inventing fake statistics
+`;
+
+/**
+ * ---------------------------------------------------------
+ * DEFAULT PAGE DNA
+ * ---------------------------------------------------------
+ */
+
+function resolvePageDna(options?: {
+  topic?: string;
+  pageDna?: string;
+  pillars?: string[];
+  emotions?: string[];
+  inspirationSources?: InspirationSource[];
+  formats?: PostFormat[];
+  imageStrategy?: string;
+  allowEmojis?: boolean;
+  useHashtags?: boolean;
+}): PageDna {
+  const topic = (options?.topic || "everyday life")
+    .trim()
+    .toLowerCase();
+
+  const preset =
+    PAGE_DNA[topic] ||
+    ({
+      identity:
+        `A personal Facebook page about ${options?.topic || "everyday life"}. The content should feel human, specific, useful or emotionally recognizable, never like a generic AI content page.`,
+
+      pillars: [
+        "everyday moments",
+        "small useful observations",
+        "things people recognize immediately",
+        "then vs now",
+        "small rituals",
+        "unexpected everyday situations",
+      ],
+
+      emotions: [
+        "relatability",
+        "curiosity",
+        "comfort",
+        "amusement",
+        "nostalgia",
+      ],
+
+      inspirationSources: [
+        "reddit",
+        "pinterest",
+        "historical",
+      ],
+
+      formats: [
+        "relatable",
+        "funny",
+        "useful",
+        "emotional",
+        "observation",
+        "question",
+        "unexpected",
+      ],
+
+      hookMechanisms: [
+        "recognition",
+        "specific_detail",
+        "curiosity",
+        "observation",
+        "unexpected",
+      ],
+
+      imageStrategy:
+        "Authentic-looking candid smartphone photography matching the story. Natural lighting, ordinary environments, realistic people and objects. A short readable quote related to the post must appear on the photo. No logos or watermarks.",
+
+      allowEmojis: false,
+      useHashtags: true,
+      minWords: 30,
+      maxWords: 160,
+      lengthGuide:
+        "Usually 50-120 words. 30-70 when the idea is simple. Never pad.",
+      hookRule:
+        "Open close to the interesting part. Keep hook → story → payoff.",
+    } satisfies PageDna);
+
+  return {
+    identity:
+      options?.pageDna?.trim() || preset.identity,
+
+    pillars:
+      options?.pillars?.length
+        ? options.pillars
+        : preset.pillars,
+
+    emotions:
+      options?.emotions?.length
+        ? options.emotions
+        : preset.emotions,
+
+    inspirationSources:
+      options?.inspirationSources?.length
+        ? options.inspirationSources
+        : preset.inspirationSources,
+
+    formats:
+      options?.formats?.length
+        ? options.formats
+        : preset.formats,
+
+    hookMechanisms: preset.hookMechanisms,
+
+    imageStrategy:
+      options?.imageStrategy?.trim() ||
+      preset.imageStrategy,
+
+    allowEmojis:
+      options?.allowEmojis ??
+      preset.allowEmojis,
+
+    useHashtags:
+      options?.useHashtags ??
+      preset.useHashtags,
+
+    minWords: preset.minWords,
+    maxWords: preset.maxWords,
+    lengthGuide: preset.lengthGuide,
+    hookRule: preset.hookRule,
+  };
+}
+
+/**
+ * ---------------------------------------------------------
+ * FORMAT INSTRUCTIONS
+ * ---------------------------------------------------------
+ */
+
+const FORMAT_INSTRUCTIONS: Record<PostFormat, string> = {
+  relatable:
+    "Hook with a specific everyday moment, tell the actual situation, then land on a recognition payoff. Do not stop at one relatable line. Do not turn it into a life lesson.",
+
+  funny:
+    "Hook with the situation, tell what actually happened, and payoff with the laugh. Humor from behavior and contrast. Sound like you are telling a friend, not writing a caption. Do not explain the joke or add a moral.",
+
+  useful:
+    "Hook with a specific problem or moment, give the actual point through a real situation, then payoff with a concrete takeaway. Practical, not preachy. Not a life lesson poster.",
+
+  POV:
+    "Only use POV if it helps. One short first line starting with POV:, then drop it and talk normally. Never write a witty caption, a metaphor, or a punchline to the pet.",
+
+  question:
+    "Hook with a specific situation, give enough story/context, then payoff with a question people would actually answer. Avoid empty 'who else?' bait.",
+
+  nostalgia:
+    "Hook with a concrete object, routine, sound, or place. Tell the memory. Payoff is recognition, not 'the past was better.'",
+
+  emotional:
+    "Hook with a small moment, tell what happened, and earn a restrained last line. Do not manufacture a valuable lesson.",
+
+  observation:
+    "Hook with a sharp observation, prove it with one concrete scene, then payoff. Not a lecture.",
+
+  list:
+    "Hook with why this list exists, give 3-6 specific items from the same situation, then a short payoff. Not generic advice.",
+
+  before_after:
+    "Hook with then or now, show the contrast through a real situation, let the difference be the payoff. No moral.",
+
+  unexpected:
+    "Hook ordinary, tell the actual turn, payoff with the shift. Keep it believable.",
+};
+
+/**
+ * ---------------------------------------------------------
+ * INSPIRATION DATA
+ * ---------------------------------------------------------
+ */
+
+const PINTEREST_SEEDS: Record<string, string[]> = {
+  pet: [
+    "young woman sitting on the floor at golden hour with her dog leaning into her",
+    "cat sleeping in a sun patch on an unmade bed",
+    "rainy window, couch, pet asleep against someone's hip",
+    "messy kitchen, dog waiting by the counter",
+    "park bench with leash in hand during late afternoon",
+    "bathroom mirror selfie with a pet photobombing",
+  ],
+
+  family: [
+    "kids at a kitchen table with mismatched plates",
+    "dad asleep on the couch with a child using him as a pillow",
+    "handwritten grocery list on a refrigerator",
+    "backyard hose on a summer afternoon",
+    "grandparents' living room at dusk with the television on",
+    "shoes piled near the front door",
+  ],
+
+  nostalgia: [
+    "1990s family living room with CRT television",
+    "old American kitchen with a rotary phone",
+    "kids playing outside before smartphones",
+    "Blockbuster-style video rental store",
+    "90s school desk with notebooks and pencils",
+    "old family photo album on a coffee table",
+  ],
+};
+
+const HISTORICAL_SEEDS = [
+  "handwritten letters instead of texts",
+  "family portraits taken once a year",
+  "kids playing outside until the streetlights came on",
+  "rotary phone on the kitchen wall",
+  "photo albums on the coffee table",
+  "Sunday dinners before phones were on the table",
+  "recipes written on index cards",
+  "milk delivered in glass bottles",
+];
+
+const OLD_PRODUCTS = [
+  "Walkman tape getting eaten by the machine",
+  "Game Boy on a car trip with no backlight",
+  "Tamagotchi dying in class",
+  "Polaroid camera and waiting for the picture",
+  "VHS tape that needed rewinding",
+  "disposable camera from a drugstore",
+  "Nokia phone surviving a fall",
+  "pager and landline phone",
+  "boombox",
+  "Beanie Babies",
+  "Super Soaker",
+];
+
+const OLD_TV = [
+  "TGIF sitcom nights",
+  "Saturday morning cartoons",
+  "Friends",
+  "Full House",
+  "Boy Meets World",
+  "Fresh Prince",
+  "America's Funniest Home Videos",
+  "TV Guide on the coffee table",
+  "rewinding a rented movie",
+  "someone standing next to the television to fix the antenna",
+];
+
+const NINETIES_CULTURE = [
+  "Blockbuster Friday night",
+  "mix tapes with handwritten track lists",
+  "mall food court as a hangout",
+  "AOL and dial-up internet",
+  "butterfly clips",
+  "slap bracelets",
+  "Dunkaroos",
+  "Lunchables",
+  "disposable cameras",
+  "passing notes in class",
+  "house phone with no caller ID",
+];
+
+/**
+ * ---------------------------------------------------------
+ * REDDIT
+ * ---------------------------------------------------------
+ */
+
+async function fetchRedditStories(
+  subreddit: string,
+  minBody = 80,
+): Promise<RealStory[]> {
+  try {
+    const response = await fetch(
+      `https://www.reddit.com/r/${subreddit}/hot.json?limit=20`,
+      {
+        headers: {
+          "User-Agent": "facebook-auto-poster/1.0",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = (await response.json()) as {
+      data?: {
+        children?: Array<{
+          data?: {
+            title?: string;
+            selftext?: string;
+            stickied?: boolean;
+            over_18?: boolean;
+          };
+        }>;
+      };
+    };
+
+    return (data.data?.children || [])
+      .map((child) => child.data)
+      .filter(
+        (post) =>
+          post &&
+          !post.stickied &&
+          !post.over_18 &&
+          (post.selftext || "").trim().length >= minBody,
+      )
+      .map((post) => ({
+        title: (post?.title || "").trim(),
+        body: (post?.selftext || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 700),
+      }))
+      .filter((post) => post.title);
+  } catch {
+    return [];
+  }
+}
+
+function redditSubsForTopic(topic: string) {
+  if (/pet|dog|cat|animal/i.test(topic)) {
+    return [
+      "Pets",
+      "dogs",
+      "cats",
+      "DogAdvice",
+      "CatAdvice",
+    ];
+  }
+
+  if (/family|parent|mom|dad|child|siblings/i.test(topic)) {
+    return [
+      "Family",
+      "Parenting",
+      "daddit",
+      "Mommit",
+      "nostalgia",
+    ];
+  }
+
+  if (/nostalgia|80s|90s|retro|vintage/i.test(topic)) {
+    return [
+      "nostalgia",
+      "OldSchoolCool",
+      "90s",
+    ];
+  }
+
+  return [
+    "CasualConversation",
+    "nostalgia",
+    "OldSchoolCool",
+  ];
+}
+
+async function collectRealStories(topic: string) {
+  const subs = redditSubsForTopic(topic);
+
+  const results = await Promise.allSettled(
+    subs.slice(0, 3).map((sub) =>
+      fetchRedditStories(sub, 80),
+    ),
+  );
+
+  const stories = results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+
+  const unique = stories.filter(
+    (story, index, list) =>
+      list.findIndex(
+        (item) => item.title === story.title,
+      ) === index,
+  );
+
+  return shuffle(unique).slice(0, 6);
+}
+
+/**
+ * ---------------------------------------------------------
+ * INSPIRATION COLLECTOR
+ * ---------------------------------------------------------
+ */
+
+async function collectInspiration(
+  source: InspirationSource,
+  topic: string,
+) {
+  const key =
+    /pet|dog|cat|animal/i.test(topic)
+      ? "pet"
+      : /family|parent|mom|dad|child|siblings/i.test(topic)
+        ? "family"
+        : /nostalgia|80s|90s|retro|vintage/i.test(topic)
+          ? "nostalgia"
+          : "";
+
+  if (source === "us_history") {
+    const events = await collectUSHistoryEvents();
+
+    if (events.length) {
+      return events;
+    }
+
+    return shuffle(US_HISTORY_EVENTS).slice(0, 6);
+  }
+
+  if (source === "us_news") {
+    const headlines = await collectUSNewsDrama();
+
+    if (headlines.length) {
+      return headlines;
+    }
+
+    return topicTrends("United States news");
+  }
+
+  if (source === "reddit") {
+    const stories = await collectRealStories(topic);
+
+    const lines = stories
+      .map((story) =>
+        story.body
+          ? `${story.title} — ${story.body.slice(0, 240)}`
+          : story.title,
+      )
+      .filter(Boolean);
+
+    if (lines.length) {
+      return lines;
+    }
+
+    return shuffle([
+      ...HISTORICAL_SEEDS,
+      ...NINETIES_CULTURE,
+    ]).slice(0, 5);
+  }
+
+  if (source === "pinterest") {
+    const seeds =
+      PINTEREST_SEEDS[key] ||
+      Object.values(PINTEREST_SEEDS).flat();
+
+    return shuffle(seeds).slice(0, 6);
+  }
+
+  if (source === "historical") {
+    return shuffle(HISTORICAL_SEEDS).slice(0, 6);
+  }
+
+  if (source === "old_products") {
+    return shuffle(OLD_PRODUCTS).slice(0, 6);
+  }
+
+  if (source === "old_tv") {
+    return shuffle(OLD_TV).slice(0, 6);
+  }
+
+  return shuffle(NINETIES_CULTURE).slice(0, 6);
+}
+
+/**
+ * ---------------------------------------------------------
+ * QUOTES FOR IMAGES
+ * ---------------------------------------------------------
+ */
+
+type ImageQuote = {
+  text: string;
+  author: string;
+};
+
+const PET_QUOTES: ImageQuote[] = [
+  {
+    text: "Time spent with cats is never wasted.",
+    author: "Sigmund Freud",
+  },
+  {
+    text: "Dogs are not our whole life, but they make our lives whole.",
+    author: "Roger Caras",
+  },
+  {
+    text: "Until one has loved an animal, a part of one's soul remains unawakened.",
+    author: "Anatole France",
+  },
+  {
+    text: "A dog is the only thing on earth that loves you more than he loves himself.",
+    author: "Josh Billings",
+  },
+  {
+    text: "Cats choose us; we don't own them.",
+    author: "Kristin Cast",
+  },
+  {
+    text: "The better I get to know men, the more I find myself loving dogs.",
+    author: "Charles de Gaulle",
+  },
+];
+
+const FAMILY_QUOTES: ImageQuote[] = [
+  {
+    text: "Insanity is hereditary; you get it from your children.",
+    author: "Sam Levenson",
+  },
+  {
+    text: "I want my children to have all the things I couldn't afford. Then I want to move in with them.",
+    author: "Phyllis Diller",
+  },
+  {
+    text: "A two-year-old is kind of like having a blender, but you don't have a top for it.",
+    author: "Jerry Seinfeld",
+  },
+  {
+    text: "The best way to keep children at home is to make the home a pleasant atmosphere and let the air out of the tires.",
+    author: "Dorothy Parker",
+  },
+  {
+    text: "Parents were invented to make children happy by giving them something to ignore.",
+    author: "Ogden Nash",
+  },
+  {
+    text: "Home is where you are loved the most and act the worst.",
+    author: "Marjorie Pay Hinckley",
+  },
+  {
+    text: "Having children is like living in a frat house. Nobody sleeps, everything's broken, and there's a lot of throwing up.",
+    author: "Ray Romano",
+  },
+  {
+    text: "The first half of our lives is ruined by our parents, and the second half by our children.",
+    author: "Clarence Darrow",
+  },
+];
+
+const NEWS_QUOTES: ImageQuote[] = [
+  {
+    text: "There is nothing more deceptive than an obvious fact.",
+    author: "Arthur Conan Doyle",
+  },
+  {
+    text: "The public have an insatiable curiosity to know everything, except what is worth knowing.",
+    author: "Oscar Wilde",
+  },
+  {
+    text: "Man is not what he thinks he is, he is what he hides.",
+    author: "Andre Malraux",
+  },
+  {
+    text: "The truth is rarely pure and never simple.",
+    author: "Oscar Wilde",
+  },
+  {
+    text: "In America, the president reigns for four years, and journalism governs forever and ever.",
+    author: "Oscar Wilde",
+  },
+];
+
+function quoteBankForTopic(topic: string) {
+  if (/us-news|news|drama/i.test(topic)) {
+    return NEWS_QUOTES;
+  }
+
+  if (/pet|dog|cat|animal/i.test(topic)) {
+    return PET_QUOTES;
+  }
+
+  return FAMILY_QUOTES;
+}
+
+function quoteSearchTerms(topic: string, content: string) {
+  const text = `${topic} ${content}`.toLowerCase();
+
+  if (/us-news/i.test(topic)) {
+    return ["truth", "america", "history", "freedom", "news"];
+  }
+
+  if (/\bcat|kitten\b/i.test(text)) {
+    return ["cat", "cats", "pet"];
+  }
+
+  if (/\bdog|puppy\b/i.test(text)) {
+    return ["dog", "dogs", "pet"];
+  }
+
+  if (/family/i.test(topic)) {
+    return ["family", "parents", "children", "funny", "home"];
+  }
+
+  if (/pet/i.test(topic)) {
+    return ["dog", "cat", "pet", "animal"];
+  }
+
+  return ["home", "life", "funny"];
+}
+
+function scoreQuote(quote: ImageQuote, haystack: string) {
+  const hay = haystack.toLowerCase();
+  const words = `${quote.text} ${quote.author}`
+    .toLowerCase()
+    .match(/\b[a-z]{4,}\b/g);
+
+  if (!words?.length) {
+    return 0;
+  }
+
+  return [...new Set(words)].reduce(
+    (score, word) => score + (hay.includes(word) ? 1 : 0),
+    0,
+  );
+}
+
+async function fetchInternetQuotes(terms: string[]) {
+  const urls = [
+    ...terms.slice(0, 2).map(
+      (term) =>
+        `https://api.quotable.io/search/quotes?query=${encodeURIComponent(term)}&limit=8`,
+    ),
+    "https://dummyjson.com/quotes?limit=50",
+    "https://zenquotes.io/api/quotes",
+  ];
+
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "facebook-auto-poster/1.0",
+        },
+      });
+
+      if (!response.ok) {
+        return [] as ImageQuote[];
+      }
+
+      const data = (await response.json()) as Record<string, any>;
+
+      if (Array.isArray(data?.results)) {
+        return data.results
+          .map((item: any) => ({
+            text: String(item.content || "").trim(),
+            author: String(item.author || "").trim() || "Unknown",
+          }))
+          .filter((item: ImageQuote) => item.text.length > 12 && item.text.length < 140);
+      }
+
+      if (Array.isArray(data?.quotes)) {
+        return data.quotes
+          .map((item: any) => ({
+            text: String(item.quote || "").trim(),
+            author: String(item.author || "").trim() || "Unknown",
+          }))
+          .filter((item: ImageQuote) => item.text.length > 12 && item.text.length < 140);
+      }
+
+      if (Array.isArray(data)) {
+        return data
+          .map((item: any) => ({
+            text: String(item.q || item.quote || item.content || "").trim(),
+            author: String(item.a || item.author || "").trim() || "Unknown",
+          }))
+          .filter((item: ImageQuote) => item.text.length > 12 && item.text.length < 140);
+      }
+
+      return [] as ImageQuote[];
+    }),
+  );
+
+  return results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+}
+
+function briefFromPost(content: string) {
+  const body = removeHashtags(content).replace(/\s+/g, " ").trim();
+  const sentences = splitSentences(body);
+  const story = sentences.slice(1).join(" ") || sentences[0] || body;
+  const cleaned = story.replace(/^["']+|["']+$/g, "").trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+
+  if (words.length <= 16 && cleaned.length <= 110) {
+    return cleaned;
+  }
+
+  return words.slice(0, 14).join(" ");
+}
+
+function pickQuoteForPost(
+  topic: string,
+  content: string,
+  originalQuote?: string,
+) {
+  const cleanedOriginal = (originalQuote || "")
+    .replace(/^["']+|["']+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (
+    cleanedOriginal &&
+    wordCount(cleanedOriginal) >= 4 &&
+    wordCount(cleanedOriginal) <= 22 &&
+    cleanedOriginal.length <= 120
+  ) {
+    return {
+      text: cleanedOriginal,
+      author: "",
+    };
+  }
+
+  return {
+    text: briefFromPost(content),
+    author: "",
+  };
+}
+
+/**
+ * ---------------------------------------------------------
+ * IMAGE
+ * ---------------------------------------------------------
+ */
+
 function stripJpegMetadata(input: Buffer) {
-  if (input.length < 4 || input[0] !== 0xff || input[1] !== 0xd8) {
+  if (
+    input.length < 4 ||
+    input[0] !== 0xff ||
+    input[1] !== 0xd8
+  ) {
     return input;
   }
 
-  const chunks: Buffer[] = [Buffer.from([0xff, 0xd8])];
+  const chunks: Buffer[] = [
+    Buffer.from([0xff, 0xd8]),
+  ];
+
   let i = 2;
 
   while (i < input.length) {
@@ -82,7 +1712,10 @@ function stripJpegMetadata(input: Buffer) {
       break;
     }
 
-    while (i < input.length && input[i] === 0xff) {
+    while (
+      i < input.length &&
+      input[i] === 0xff
+    ) {
       i += 1;
     }
 
@@ -113,13 +1746,26 @@ function stripJpegMetadata(input: Buffer) {
       break;
     }
 
-    const length = (input[i] << 8) | input[i + 1];
+    const length =
+      (input[i] << 8) | input[i + 1];
+
     const next = i + length;
-    const skip = (marker >= 0xe0 && marker <= 0xef) || marker === 0xfe;
+
+    const skip =
+      (marker >= 0xe0 && marker <= 0xef) ||
+      marker === 0xfe;
 
     if (!skip) {
-      chunks.push(Buffer.from([0xff, marker]));
-      chunks.push(input.subarray(i, Math.min(next, input.length)));
+      chunks.push(
+        Buffer.from([0xff, marker]),
+      );
+
+      chunks.push(
+        input.subarray(
+          i,
+          Math.min(next, input.length),
+        ),
+      );
     }
 
     i = next;
@@ -128,182 +1774,1026 @@ function stripJpegMetadata(input: Buffer) {
   return Buffer.concat(chunks);
 }
 
-function saveCleanJpeg(imagePath: string, raw: Buffer) {
-  fs.writeFileSync(imagePath, stripJpegMetadata(raw));
+function saveCleanJpeg(
+  imagePath: string,
+  raw: Buffer,
+) {
+  fs.writeFileSync(
+    imagePath,
+    stripJpegMetadata(raw),
+  );
 }
 
 async function generateImage(prompt: string) {
-  const models = [IMAGE_MODEL, "gpt-image-1"];
+  const models = [
+    IMAGE_MODEL,
+    FALLBACK_IMAGE_MODEL,
+  ];
+
   let lastError = "";
 
   for (const model of models) {
-    const response = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openaiApiKey()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        prompt,
-        n: 1,
-        size: "1024x1024",
-        quality: "low",
-        output_format: "jpeg",
-      }),
-    });
+    try {
+      const response = await fetch(
+        "https://api.openai.com/v1/images/generations",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${openaiApiKey()}`,
+            "Content-Type": "application/json",
+          },
 
-    if (!response.ok) {
-      lastError = await response.text();
-      continue;
-    }
+          body: JSON.stringify({
+            model,
+            prompt,
+            n: 1,
+            size: "1024x1024",
+            quality: "low",
+            output_format: "jpeg",
+          }),
+        },
+      );
 
-    const data = (await response.json()) as {
-      data?: Array<{ b64_json?: string; url?: string }>;
-    };
-
-    const image = data.data?.[0];
-
-    if (!image) {
-      lastError = "OpenAI image API returned no image";
-      continue;
-    }
-
-    fs.mkdirSync(imageDir, { recursive: true });
-
-    const filename = `post-${Date.now()}.jpg`;
-    const imagePath = path.join(imageDir, filename);
-
-    if (image.b64_json) {
-      saveCleanJpeg(imagePath, Buffer.from(image.b64_json, "base64"));
-      return imagePath;
-    }
-
-    if (image.url) {
-      const download = await fetch(image.url);
-
-      if (!download.ok) {
-        lastError = "Could not download generated image";
+      if (!response.ok) {
+        lastError = await response.text();
         continue;
       }
 
-      saveCleanJpeg(imagePath, Buffer.from(await download.arrayBuffer()));
-      return imagePath;
-    }
+      const data = (await response.json()) as {
+        data?: Array<{
+          b64_json?: string;
+          url?: string;
+        }>;
+      };
 
-    lastError = "OpenAI image API returned neither b64_json nor url";
+      const image = data.data?.[0];
+
+      if (!image) {
+        lastError =
+          "OpenAI image API returned no image";
+        continue;
+      }
+
+      fs.mkdirSync(imageDir, {
+        recursive: true,
+      });
+
+      const filename =
+        `post-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}.jpg`;
+
+      const imagePath = path.join(
+        imageDir,
+        filename,
+      );
+
+      if (image.b64_json) {
+        saveCleanJpeg(
+          imagePath,
+          Buffer.from(
+            image.b64_json,
+            "base64",
+          ),
+        );
+
+        return imagePath;
+      }
+
+      if (image.url) {
+        const download = await fetch(
+          image.url,
+        );
+
+        if (!download.ok) {
+          lastError =
+            "Could not download generated image";
+          continue;
+        }
+
+        saveCleanJpeg(
+          imagePath,
+          Buffer.from(
+            await download.arrayBuffer(),
+          ),
+        );
+
+        return imagePath;
+      }
+
+      lastError =
+        "OpenAI image API returned neither b64_json nor url";
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error.message
+          : String(error);
+    }
   }
 
-  throw new Error(`OpenAI image API error: ${lastError}`);
+  throw new Error(
+    `OpenAI image API error: ${lastError}`,
+  );
 }
 
-async function topicTrends(topic: string) {
-  const query = encodeURIComponent(topic);
-  const sources = await Promise.allSettled([
-    fetchHeadlines(
-      `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`,
-    ),
-    currentTrends(),
-  ]);
+/**
+ * ---------------------------------------------------------
+ * STRUCTURED OUTPUT SCHEMA
+ * ---------------------------------------------------------
+ */
 
-  return sources
-    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
-    .filter(Boolean)
-    .slice(0, 16);
-}
-
-const POST_ANGLES = [
-  "a small personal story",
-  "a practical everyday tip",
-  "a question for friends",
-  "a warm observation",
-  "a recommendation",
-  "something funny from daily life",
-];
-
-export async function generatePost(options?: {
-  forceImage?: boolean;
-  topic?: string;
-  previousPosts?: string[];
-}): Promise<GeneratedPost> {
-  const topic = options?.topic?.trim() || "everyday life";
-  const trends = await topicTrends(topic);
-  const today = new Date().toISOString().slice(0, 10);
-  const angle = POST_ANGLES[Math.floor(Math.random() * POST_ANGLES.length)];
-  const trendList = trends.length
-    ? trends.map((item, index) => `${index + 1}. ${item}`).join("\n")
-    : "(no live headlines available)";
-  const previous = (options?.previousPosts || [])
-    .slice(0, 8)
-    .map((item, index) => `${index + 1}. ${item.slice(0, 180)}`)
-    .join("\n");
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openaiApiKey()}`,
-      "Content-Type": "application/json",
+const CONTENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    contentIdea: {
+      type: "string",
     },
+
+    hookMechanism: {
+      type: "string",
+      enum: [
+        "recognition",
+        "curiosity",
+        "specific_detail",
+        "identity",
+        "confession",
+        "unexpected",
+        "nostalgia",
+        "observation",
+      ],
+    },
+
+    emotionalTrigger: {
+      type: "string",
+    },
+
+    payoff: {
+      type: "string",
+    },
+
+    content: {
+      type: "string",
+      description:
+        "The full Facebook post. Use short paragraphs separated by blank lines (\\n\\n). Hook, then story, then payoff, then a blank line, then 2-4 hashtags. Never one block of text.",
+    },
+
+    imageQuote: {
+      type: "string",
+      description:
+        "A 6 to 16 word summary of this exact post, used as text on the image. No celebrity quote. No author name. No hashtags.",
+    },
+
+    needsImage: {
+      type: "boolean",
+    },
+
+    imagePrompt: {
+      type: "string",
+    },
+  },
+
+  required: [
+    "contentIdea",
+    "hookMechanism",
+    "emotionalTrigger",
+    "payoff",
+    "content",
+    "imageQuote",
+    "needsImage",
+    "imagePrompt",
+  ],
+};
+
+/**
+ * ---------------------------------------------------------
+ * OPENAI TEXT GENERATION
+ * ---------------------------------------------------------
+ */
+
+type OpenAIResponsePayload = {
+  status?: string;
+  output_text?: string | null;
+  incomplete_details?: { reason?: string };
+  output?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string | null;
+    }>;
+  }>;
+};
+
+function extractResponseText(data: OpenAIResponsePayload) {
+  if (data.output_text?.trim()) {
+    return data.output_text.trim();
+  }
+
+  const parts: string[] = [];
+
+  for (const item of data.output || []) {
+    for (const part of item.content || []) {
+      if (part.text?.trim()) {
+        parts.push(part.text.trim());
+      }
+    }
+  }
+
+  return parts.join("\n").trim();
+}
+
+async function generateStructuredContent(
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<GeneratedContent> {
+  const headers = {
+    Authorization: `Bearer ${openaiApiKey()}`,
+    "Content-Type": "application/json",
+  };
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers,
     body: JSON.stringify({
       model: TEXT_MODEL,
-      temperature: 1,
-      response_format: { type: "json_object" },
-      messages: [
+      max_output_tokens: 4000,
+      input: [
         {
           role: "system",
-          content:
-            'You write Facebook posts in English like a normal person, not a brand or a news bot. No emojis, no icons, no decorative symbols, no markdown. Avoid stock phrases like stay tuned, major news, unleashes, or revolutionize. Use contractions and a casual tone. Stay on the given topic. Each post must be different from previous posts. Return JSON only: {"content":"facebook post text only","needsImage":true,"imagePrompt":"short prompt for a natural-looking phone photo with no text, logos, watermarks, or UI, or empty string"}. content must be 80-150 words, 2-4 short paragraphs, and 2-4 hashtags related to the topic.',
+          content: [{ type: "input_text", text: systemPrompt }],
         },
         {
           role: "user",
-          content: `Today is ${today}. Write a new Facebook post about this topic: ${topic}.
-Use this angle: ${angle}.
-You may take light inspiration from these headlines, but the post must be about ${topic}, not random news:
-${trendList}
-
-Do not repeat or closely rewrite these previous posts:
-${previous || "(none)"}`,
+          content: [{ type: "input_text", text: userPrompt }],
         },
       ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "facebook_post",
+          strict: true,
+          schema: CONTENT_SCHEMA,
+        },
+      },
     }),
   });
 
-  if (!response.ok) {
+  let raw = "";
+
+  if (response.ok) {
+    const data = (await response.json()) as OpenAIResponsePayload;
+    raw = extractResponseText(data);
+
+    if (!raw && data.status && data.status !== "completed") {
+      log(
+        "WARN",
+        `OpenAI responses status=${data.status} reason=${data.incomplete_details?.reason || "unknown"}`,
+      );
+    }
+  } else {
     const details = await response.text();
-    throw new Error(`OpenAI API error ${response.status}: ${details}`);
+    log("WARN", `OpenAI responses API ${response.status}: ${details.slice(0, 400)}`);
   }
 
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
+  if (!raw) {
+    const fallback = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: TEXT_MODEL,
+        temperature: 0.9,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "facebook_post",
+            strict: true,
+            schema: CONTENT_SCHEMA,
+          },
+        },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
 
-  const raw = data.choices?.[0]?.message?.content?.trim();
+    if (!fallback.ok) {
+      const details = await fallback.text();
+      throw new Error(`OpenAI API error ${fallback.status}: ${details}`);
+    }
+
+    const data = (await fallback.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    raw = data.choices?.[0]?.message?.content?.trim() || "";
+  }
 
   if (!raw) {
     throw new Error("OpenAI API returned empty content");
   }
 
-  const parsed = JSON.parse(raw) as {
-    content?: string;
-    needsImage?: boolean;
-    imagePrompt?: string;
-  };
+  try {
+    return JSON.parse(raw) as GeneratedContent;
+  } catch {
+    throw new Error(`OpenAI returned invalid JSON: ${raw.slice(0, 500)}`);
+  }
+}
 
-  const content = stripEmojis(parsed.content?.trim() || "");
+/**
+ * ---------------------------------------------------------
+ * MAIN GENERATOR
+ * ---------------------------------------------------------
+ */
+
+export async function generatePost(options?: {
+  forceImage?: boolean;
+  topic?: string;
+  previousPosts?: string[];
+  imageStyle?: string;
+  accountName?: string;
+  source?: "original" | "rewrite-real-stories";
+
+  pageDna?: string;
+  pillars?: string[];
+  emotions?: string[];
+
+  inspirationSources?: InspirationSource[];
+  formats?: PostFormat[];
+
+  imageStrategy?: string;
+  allowEmojis?: boolean;
+  useHashtags?: boolean;
+}): Promise<GeneratedPost> {
+  const topic =
+    options?.topic?.trim() ||
+    "everyday life";
+
+  const today = new Date()
+    .toISOString()
+    .slice(0, 10);
+
+  const dna = resolvePageDna({
+    topic,
+    pageDna: options?.pageDna,
+    pillars: options?.pillars,
+    emotions: options?.emotions,
+    inspirationSources:
+      options?.inspirationSources,
+    formats: options?.formats,
+    imageStrategy:
+      options?.imageStrategy,
+    allowEmojis:
+      options?.allowEmojis,
+    useHashtags:
+      options?.useHashtags,
+  });
+
+  const pillar = pick(dna.pillars);
+  const emotion = pick(dna.emotions);
+
+  const isFamily = /family/i.test(topic);
+  const format = isFamily ? "before_after" : pick(dna.formats);
+
+  const hookMechanism =
+    pick(dna.hookMechanisms);
+
+  const isUSNews = /us-news|us news/i.test(topic);
+  const fb001Track = isUSNews
+    ? Math.random() < 0.5
+      ? "news"
+      : "history"
+    : null;
+  const inspirationSource = fb001Track
+    ? fb001Track === "news"
+      ? "us_news"
+      : "us_history"
+    : pick(dna.inspirationSources);
+  const useTrend = fb001Track === "news" ? true : Math.random() < 0.3;
+
+  /**
+   * Give the model more previous content,
+   * but only short excerpts.
+   */
+  const previous = (
+    options?.previousPosts || []
+  )
+    .slice(0, 12)
+    .map(
+      (item, index) =>
+        `${index + 1}. ${item
+          .replace(/\s+/g, " ")
+          .slice(0, 240)}`,
+    )
+    .join("\n");
+
+  const [
+    inspirationItems,
+    trendItems,
+  ] = await Promise.all([
+    collectInspiration(
+      inspirationSource,
+      topic,
+    ),
+
+    useTrend
+      ? topicTrends(topic)
+      : Promise.resolve([] as string[]),
+  ]);
+
+  const inspiration =
+    numbered(inspirationItems);
+
+  const optionalTrend = trendItems.length
+    ? numbered(
+        shuffle(trendItems).slice(0, 3),
+      )
+    : "No useful trend. Ignore trends.";
+
+  log(
+    "INFO",
+    `${options?.accountName || topic} pipeline: ` +
+      `${pillar} / ${emotion} / ` +
+      `${inspirationSource} / ${format} / ` +
+      `${hookMechanism}` +
+      `${fb001Track ? ` / ${fb001Track}` : ""}` +
+      `${useTrend ? " / trend" : ""}`,
+  );
+
+  const systemPrompt = `
+You are an elite Facebook content strategist and writer creating organic content for a US audience.
+
+Your job is NOT to sound impressive.
+
+Your job is to create a post that a real person would stop reading, recognize themselves in, and possibly respond to.
+${
+  fb001Track === "news"
+    ? NEWS_VOICE_RULES
+    : fb001Track === "history"
+      ? HISTORY_VOICE_RULES
+      : /pet/i.test(topic)
+        ? PET_VOICE_RULES
+        : /family/i.test(topic)
+          ? FAMILY_THEN_NOW_VOICE_RULES
+          : ""
+}
+CONTENT PRINCIPLES
+
+1. Write natural American English.
+2. Sound human, not like an AI copywriter.
+3. Prefer concrete details over generic emotional language.
+4. Start close to the interesting part.
+5. Do not spend half the post setting up the situation.
+6. Give the reader a reason to keep reading.
+7. Every post must have a payoff: a laugh, a recognition hit, a useful takeaway, an earned emotion, or a question worth answering. Not every post needs a valuable lesson.
+8. Every sentence must earn its place.
+9. Do not add words simply to reach a target length.
+10. Avoid exaggerated storytelling.
+11. Avoid motivational-speaker language.
+12. Avoid generic engagement bait.
+13. Do not use "tag someone", "share this", "who else can relate", or similar phrases unless the actual content makes it unusually natural.
+14. Do not fabricate statistics, studies, quotes, or facts.
+15. Do not make the post sound like an advertisement.
+16. Do not mention Reddit, Pinterest, Google News, sources, prompts, AI, or this instruction.
+17. Do not copy source wording.
+18. Format the post with real line breaks. Short paragraphs. A blank line between paragraphs. Never one wall of text.
+
+IMPORTANT ABOUT PERSONAL STORIES
+
+The page can use a first-person voice, but do NOT falsely present a real person's internet story as something that happened to the writer.
+
+When using Reddit or another real story as inspiration:
+
+- Extract the emotional situation.
+- Extract the useful human insight.
+- Extract the type of conflict or funny moment.
+- Create a substantially original scenario.
+- Do not preserve the same sequence of events.
+- Do not reuse distinctive dialogue.
+- Do not copy unusual details.
+- Do not claim the source event happened to the writer.
+
+The result should feel original.
+
+CONTENT SHAPE
+
+Talk like a normal person. Do not write a caption, a quote graphic, or one relatable sentence.
+
+Every post MUST have this shape:
+
+HOOK (one catching sentence, its own first paragraph)
+→ actual point / story / situation
+→ PAYOFF
+
+The first line is one sentence. It is about this post. It creates urgency and curiosity so someone stops scrolling and wants to read the rest. It does not dump the whole story.
+
+Good first lines:
+They used to share one phone. Nobody shares a table now.
+America almost lost this in a single afternoon.
+The house phone used to be an event.
+
+Bad first lines:
+You won't believe what happened next.
+Let me tell you about family dinners.
+Here's the thing about US history.
+
+The middle is a real scene, detail, or point worth reading.
+The payoff gives them a reason to stay, react, or comment.
+
+A single relatable line is not a post.
+
+LINE BREAKS
+
+This is required in the content field.
+
+Write 3 to 5 short paragraphs.
+Put a blank line between every paragraph.
+Put the hashtags after another blank line, on their own last line.
+
+The content string must look like this:
+
+They used to fight over one phone in the hallway.
+
+Grandma would stand there timing you. You got five minutes. If someone called the house, the whole family knew.
+
+Now everyone is on their own phone at the same table, and nobody says a word.
+
+#FamilyLife #ThenVsNow
+
+In JSON, that means real newline characters: paragraph, \\n\\n, paragraph, \\n\\n, paragraph, \\n\\n, hashtags.
+
+Do not write the post as one paragraph.
+Do not join sentences with extra spaces instead of line breaks.
+Do not use labels like Hook: or Story:.
+
+The assigned format decides the kind of post:
+
+- funny: payoff is the laugh
+- relatable: payoff is "that's my life"
+- useful: payoff is a concrete takeaway
+- emotional: payoff is an earned feeling
+- question: payoff is a question people would actually answer
+
+Do NOT force a moral, life lesson, or "what I learned."
+A funny post can just be funny. A question post can just be a good question.
+
+HASHTAGS
+
+Hashtags are required.
+
+Use exactly 2-4 hashtags on their own last line, after a blank line.
+
+They must be specific to this post and this topic.
+
+Good: #DogMom #RescueDog #90sKids #FamilyLife #CatPeople
+Bad: #LifeChangingMoment #Blessed #GoodVibesOnly #Heartwarming #RelatableContent #DeepThoughts #MondayMotivation
+
+Do not invent inspirational, vague, or concatenated AI hashtags.
+Do not put hashtags inside the story.
+
+STYLE
+
+Avoid these common AI openings and phrases:
+
+"So, picture this..."
+"Let me tell you..."
+"You won't believe..."
+"You know what that means..."
+"Of course, I had to..."
+"And that's when..."
+"Here's the thing..."
+"At the end of the day..."
+"Little did I know..."
+"I couldn't believe..."
+"Who else can relate?"
+"Can anyone else relate?"
+
+Do not use them unless absolutely necessary.
+
+Do not overuse rhetorical questions.
+
+Do not explain the joke after making the joke.
+
+Do not explain the emotion after creating the emotion.
+
+FORMAT
+
+${FORMAT_INSTRUCTIONS[format]}
+
+LENGTH
+
+${dna.lengthGuide}
+
+HOOK RULE
+
+${dna.hookRule}
+
+STRUCTURE
+
+Required, not optional:
+
+One catching sentence (its own first paragraph)
+→
+actual point / story / situation
+→
+payoff
+
+The first paragraph is exactly one sentence. It is about this post. It creates curiosity and the urge to read more. It does not tell the whole story.
+Put each part on its own short paragraph with a blank line between them.
+Never write the post as one block of text with no line breaks.
+The middle must be a real beat, not a restatement of the hook.
+The payoff must match the assigned format. Do not default to a valuable lesson.
+
+HASHTAGS
+
+Always include 2-4 relevant hashtags on their own last line after a blank line.
+Never skip hashtags. Never use generic AI hashtags like #LifeChangingMoment.
+
+PAGE DNA
+
+${dna.identity}
+
+CONTENT PILLAR
+
+${pillar}
+
+TARGET EMOTION
+
+${emotion}
+
+HOOK MECHANISM
+
+${hookMechanism}
+
+ASSIGNED FORMAT
+
+${format}
+
+HASHTAGS
+
+Use exactly 2-4 specific hashtags on their own last line after a blank line.
+Do not use generic AI hashtags.
+
+EMOJIS
+
+${
+  dna.allowEmojis
+    ? "Use emojis sparingly only when they genuinely fit."
+    : "Do not use emojis."
+}
+
+IMAGE
+
+The image should support the actual post.
+
+Do not create an image just because an image is normally expected.
+
+If an image is requested, it should show a specific moment from the post, not a generic representation of the topic.
+
+Return the requested structured output.
+`;
+
+  const userPrompt = `
+Today: ${today}
+
+TOPIC
+
+${topic}
+
+CONTENT PILLAR
+
+${pillar}
+
+TARGET EMOTION
+
+${emotion}
+
+FORMAT
+
+${format}
+
+FORMAT INSTRUCTION
+
+${FORMAT_INSTRUCTIONS[format]}
+
+HOOK MECHANISM
+
+${hookMechanism}
+
+INSPIRATION SOURCE
+
+${
+  fb001Track === "news"
+    ? "hottest US news and drama from the last few days"
+    : fb001Track === "history"
+      ? "real events in US history, including on this day"
+      : inspirationSource
+}
+
+INSPIRATION
+
+${inspiration}
+
+${
+  fb001Track === "news"
+    ? `These are live headlines from the last few days in the US.
+Pick ONE real story. Write a Facebook reaction to it.
+Do not invent news.`
+    : fb001Track === "history"
+      ? `These are real US historical events.
+Pick ONE event. Write a Facebook post about it.
+Include when it happened. Do not invent history.`
+      : `OPTIONAL CURRENT TREND
+
+${optionalTrend}
+
+Use a trend only when it naturally improves the idea.
+
+Never force a trend into the post.`
+}
+
+PREVIOUS POSTS
+
+${previous || "(none)"}
+
+Do not repeat the previous posts.
+
+Do not merely change names or a few words.
+
+Create a genuinely different situation, hook, and payoff.
+
+TASK
+
+First decide internally what the strongest content idea is.
+
+Then write the final Facebook post.
+
+The contentIdea should be one concise sentence describing the idea.
+
+The hookMechanism should describe the actual hook used.
+
+The emotionalTrigger should describe why the target reader would care.
+
+The payoff should describe what the reader gets at the end: a laugh, recognition, useful takeaway, earned emotion, or a real question. Not a forced life lesson.
+
+The content field must contain ONLY the Facebook post itself.
+
+Do not include labels such as "Hook:", "Story:", "CTA:", or "Post:".
+
+Format content exactly like a Facebook post people would actually see:
+
+paragraph 1 (ONE catching sentence about this post. Curiosity. Urge to read more.)
+
+blank line
+
+paragraph 2 (what happened)
+
+blank line
+
+paragraph 3 (payoff)
+
+blank line
+
+#Two #ToFour #Hashtags
+
+Use real \\n\\n line breaks inside the JSON string. If the post is longer, add another short paragraph, still with blank lines between them. Never one wall of text.
+
+${dna.hookRule}
+
+${dna.lengthGuide}
+
+${
+  fb001Track === "news"
+    ? "Write about a real US news or drama story from the last few days. Sound like a person, not a news desk. Do not invent facts."
+    : fb001Track === "history"
+      ? "Write about a real US historical event. Name what happened and when. Sound like a person, not a textbook. Do not invent facts."
+      : /pet/i.test(topic)
+        ? "Sound like a real owner, not a caption writer. No metaphors. No punchline to the pet. Funny because it happened."
+        : /family/i.test(topic)
+          ? "Compare family life in the old days with nowadays. One specific contrast. Funny and interesting, not a lecture."
+          : ""
+}
+
+End with 2-4 relevant hashtags on their own last line. No generic AI hashtags.
+
+The post should feel like something worth seeing in a Facebook feed, not an article.
+
+IMAGE
+
+Create a concise image prompt that visually matches the exact situation in the final post.
+
+The photo MUST include a short, readable line that is a summary or brief of THIS post.
+
+imageQuote must be 6-16 words that recap the post. Not a celebrity quote. Not a generic slogan. No author name.
+
+Spell it correctly.
+
+${dna.imageStrategy}
+
+${
+  options?.imageStyle?.trim()
+    ? `Additional image style:
+${options.imageStyle.trim()}`
+    : ""
+}
+`;
+
+  let generated =
+    await generateStructuredContent(
+      systemPrompt,
+      userPrompt,
+    );
+
+  let content =
+    normalizePostContent(
+      generated.content?.trim() || "",
+      {
+        allowEmojis:
+          dna.allowEmojis,
+        useHashtags:
+          dna.useHashtags,
+      },
+    );
+
+  /**
+   * One lightweight repair attempt.
+   *
+   * This protects against occasional generic AI openings
+   * without turning the system into an expensive multi-call
+   * generation pipeline.
+   */
+  const validation =
+    validateGeneratedPost(content, {
+      minWords: dna.minWords,
+      maxWords: dna.maxWords,
+      shortFunnyHook: /pet/i.test(topic),
+    });
+
+  if (!validation.valid) {
+    log(
+      "WARN",
+      `${options?.accountName || topic} post quality guard: ${validation.reason}`,
+    );
+
+    const repairSystemPrompt = `
+Rewrite the Facebook post below so it has a real hook, an actual point or story, and a payoff.
+
+Keep the core idea and the assigned vibe (funny, relatable, useful, emotional, or question). Do not turn it into a life lesson unless it already is one.
+
+Fix this problem:
+
+${validation.reason}
+
+Rules:
+
+- Natural American English.
+- Start with one catching sentence on its own first line, related to this post, that makes people want to read more.
+- Keep hook → story/point → payoff. One relatable sentence is not enough.
+- Use short paragraphs with a blank line between them. Do not return one wall of text.
+- ${dna.hookRule}
+- ${dna.lengthGuide}
+- End with 2-4 specific hashtags on their own last line.
+- Do not use generic AI hashtags like #LifeChangingMoment, #Blessed, or #GoodVibesOnly.
+- Remove generic AI phrases.
+- Do not make it longer unless necessary.
+- Do not explain what you changed.
+- Return only the revised Facebook post.
+`;
+
+    const repairResponse = await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+
+        headers: {
+          Authorization: `Bearer ${openaiApiKey()}`,
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          model: TEXT_MODEL,
+          max_output_tokens: 2000,
+
+          input: [
+            {
+              role: "system",
+              content: [
+                {
+                  type: "input_text",
+                  text: repairSystemPrompt,
+                },
+              ],
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: content,
+                },
+              ],
+            },
+          ],
+
+          text: {
+            format: {
+              type: "text",
+            },
+          },
+        }),
+      },
+    );
+
+    if (repairResponse.ok) {
+      const repairData =
+        (await repairResponse.json()) as OpenAIResponsePayload;
+
+      const repaired = extractResponseText(repairData);
+
+      if (repaired) {
+        content =
+          normalizePostContent(
+            repaired,
+            {
+              allowEmojis:
+                dna.allowEmojis,
+              useHashtags:
+                dna.useHashtags,
+            },
+          );
+      }
+    }
+  }
 
   if (!content) {
-    throw new Error("OpenAI API returned empty post content");
+    throw new Error(
+      "OpenAI generated empty Facebook post",
+    );
   }
 
-  if (!parsed.needsImage && !options?.forceImage) {
-    return { content };
+  /**
+   * If the model decides the post does not need
+   * an image, respect it unless forceImage=true.
+   */
+  if (
+    !generated.needsImage &&
+    !options?.forceImage
+  ) {
+    return {
+      content,
+    };
   }
 
-  const imagePrompt =
-    parsed.imagePrompt?.trim() ||
-    `Casual phone photo about ${topic}, natural lighting, no text, no watermark, no logo`;
+  /**
+   * IMAGE PROMPT
+   *
+   * Page DNA owns the image strategy.
+   * No more "FB 001" hacks.
+   */
+  const quote = pickQuoteForPost(
+    topic,
+    content,
+    generated.imageQuote,
+  );
 
-  const imagePath = await generateImage(imagePrompt);
+  log(
+    "INFO",
+    quote.author
+      ? `Image quote: "${quote.text}" — ${quote.author}`
+      : `Image quote: "${quote.text}"`,
+  );
 
-  return { content, imagePath };
+  const imagePrompt = [
+    dna.imageStrategy,
+
+    generated.imagePrompt?.trim() ||
+      `A candid everyday moment related to ${topic}`,
+
+    "The image must match the exact situation in the Facebook post.",
+
+    "Natural human behavior and believable surroundings.",
+
+    `The photograph must include this exact brief of the post in clear, readable English text on the image: "${quote.text}"`,
+
+    "Do not add a celebrity name, author, or fake attribution.",
+
+    "The text is a short summary of the post, large and easy to read, correctly spelled, no extra slogans.",
+
+    "No logos.",
+    "No watermarks.",
+    "No collage.",
+    "No split screen.",
+    "No UI.",
+  ]
+    .filter(Boolean)
+    .join(". ");
+
+  const imagePath =
+    await generateImage(imagePrompt);
+
+  return {
+    content,
+    imagePath,
+  };
 }
+

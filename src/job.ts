@@ -33,6 +33,12 @@ export async function runPublishFlow(account: AccountConfig) {
     forceImage: true,
     topic: account.topic,
     previousPosts: recentPostsForAccount(account.name),
+    imageStyle: account.imageStyle,
+    accountName: account.name,
+    source: account.source,
+    pageDna: account.pageDna,
+    pillars: account.pillars,
+    emotions: account.emotions,
   });
 
   if (!generated.imagePath) {
