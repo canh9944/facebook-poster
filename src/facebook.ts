@@ -498,10 +498,379 @@ async function clickPublishInDialog(page: any) {
   return clicked;
 }
 
+async function jsClick(locator: any) {
+  const handle = await locator.elementHandle().catch(() => null);
+
+  if (!handle) {
+    return false;
+  }
+
+  return handle
+    .evaluate((el: HTMLElement) => {
+      el.scrollIntoView({ block: "center", inline: "center" });
+      el.click();
+      return true;
+    })
+    .catch(() => false);
+}
+
+function postSnippet(content: string) {
+  const first =
+    content
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .find(Boolean) || content;
+
+  return first.replace(/\s+/g, " ").slice(0, 48);
+}
+
+async function waitForOwnPost(page: any, content: string, timeoutMs = 25000) {
+  const snippet = postSnippet(content);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const matched = page.getByRole("article").filter({ hasText: snippet }).first();
+
+    if (await matched.isVisible().catch(() => false)) {
+      return matched;
+    }
+
+    await page.waitForTimeout(1500);
+  }
+
+  return null;
+}
+
+async function findCommentBox(scope: any) {
+  const locators = [
+    scope.locator('[aria-label*="Write a comment" i]'),
+    scope.locator('[aria-label*="Viết bình luận" i]'),
+    scope.locator('[aria-placeholder*="comment" i]'),
+    scope.locator('[aria-placeholder*="bình luận" i]'),
+    scope.locator('[role="textbox"]'),
+    scope.locator('[contenteditable="true"]'),
+  ];
+
+  for (const locator of locators) {
+    const count = await locator.count();
+
+    for (let i = 0; i < count; i += 1) {
+      const box = locator.nth(i);
+
+      if (!(await box.isVisible().catch(() => false))) {
+        continue;
+      }
+
+      const aria =
+        `${(await box.getAttribute("aria-label").catch(() => "")) || ""} ${(await box.getAttribute("aria-placeholder").catch(() => "")) || ""}`;
+
+      if (/search|tìm|message|tin nhắn|chat|create post|tạo bài|mind|nghĩ/i.test(aria)) {
+        continue;
+      }
+
+      if (/comment|bình luận/i.test(aria) || locator === locators[0] || locator === locators[1]) {
+        return box;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function openCommentBox(page: any, post: any) {
+  let box = await findCommentBox(post);
+
+  if (box) {
+    return box;
+  }
+
+  const commentButtons = [
+    post.getByRole("button", { name: /^(comment|leave a comment|bình luận)$/i }),
+    post.locator('[aria-label="Leave a comment"]'),
+    post.locator('[aria-label="Comment"]'),
+    post.locator('[aria-label="Bình luận"]'),
+  ];
+
+  for (const locator of commentButtons) {
+    const button = locator.first();
+
+    if (await button.isVisible({ timeout: 800 }).catch(() => false)) {
+      await jsClick(button);
+      await page.waitForTimeout(1500);
+      box = await findCommentBox(post);
+
+      if (box) {
+        return box;
+      }
+    }
+  }
+
+  throw new Error("Facebook comment box was not found on the published post.");
+}
+
+async function typeComment(page: any, box: any, comment: string) {
+  await box.scrollIntoViewIfNeeded();
+  await jsClick(box);
+  await page.waitForTimeout(400);
+  await page.keyboard.insertText(comment);
+  await page.waitForTimeout(500);
+  await page.keyboard.press("Enter");
+}
+
+async function commentAppeared(post: any, comment: string) {
+  const snippet = comment.slice(0, 36);
+  return post.getByText(snippet).first().isVisible({ timeout: 8000 }).catch(() => false);
+}
+
+async function clickCommentOverflow(page: any, post: any, comment: string) {
+  const snippet = comment.slice(0, 36);
+  const commentArticle = post.getByRole("article").filter({ hasText: snippet }).first();
+  const commentText = post.getByText(snippet).first();
+  const scope = (await commentArticle.isVisible().catch(() => false))
+    ? commentArticle
+    : commentText;
+
+  await commentText.scrollIntoViewIfNeeded().catch(() => {});
+  await scope.hover().catch(() => {});
+
+  const box = await scope.boundingBox().catch(() => null);
+
+  if (box) {
+    await page.mouse.move(box.x + Math.max(box.width - 24, 8), box.y + 10);
+  }
+
+  await page.waitForTimeout(700);
+
+  const menuButtons = [
+    scope.locator('[aria-label="Actions for this comment"]'),
+    scope.locator('[aria-label*="actions for this comment" i]'),
+    scope.locator('[aria-label="More"]'),
+    scope.getByRole("button", {
+      name: /more|tùy chọn|tuỳ chọn|actions for this comment/i,
+    }),
+    scope.locator('[aria-haspopup="menu"]'),
+    post.locator('[aria-label="Actions for this comment"]'),
+  ];
+
+  for (const locator of menuButtons) {
+    const button = locator.last();
+
+    if (await button.isVisible({ timeout: 700 }).catch(() => false)) {
+      await jsClick(button);
+      return true;
+    }
+  }
+
+  return post.evaluate((root: HTMLElement, needle: string) => {
+    const lower = needle.toLowerCase();
+    const articles = [...root.querySelectorAll('[role="article"]')];
+    let commentRoot =
+      [...articles].reverse().find((el) =>
+        (el.textContent || "").toLowerCase().includes(lower),
+      ) || null;
+
+    if (!commentRoot) {
+      commentRoot =
+        [...root.querySelectorAll("div")].find((el) => {
+          const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ");
+          return text.toLowerCase().includes(lower) && text.length < 500;
+        }) || null;
+    }
+
+    if (!commentRoot) {
+      return false;
+    }
+
+    commentRoot.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+
+    const buttons = [
+      ...commentRoot.querySelectorAll('[role="button"], button, [aria-haspopup="menu"]'),
+    ];
+
+    for (const button of buttons) {
+      const aria = (button.getAttribute("aria-label") || "").toLowerCase();
+
+      if (/action|more|tùy|tuỳ|menu|option/.test(aria)) {
+        (button as HTMLElement).click();
+        return true;
+      }
+    }
+
+    const last = buttons[buttons.length - 1] as HTMLElement | undefined;
+    last?.click();
+    return Boolean(last);
+  }, snippet);
+}
+
+async function clickPinAction(page: any) {
+  const pinName =
+    /pin comment|pin this comment|pin to top|ghim bình luận|^pin$|^ghim$/i;
+
+  const menuPin = page.getByRole("menuitem", { name: pinName }).first();
+
+  if (await menuPin.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await jsClick(menuPin);
+    return true;
+  }
+
+  const buttonPin = page.getByRole("button", { name: pinName }).first();
+
+  if (await buttonPin.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await jsClick(buttonPin);
+    return true;
+  }
+
+  const textPin = page.getByText(pinName).first();
+
+  if (await textPin.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await jsClick(textPin);
+    return true;
+  }
+
+  return page.evaluate(() => {
+    const items = [
+      ...document.querySelectorAll('[role="menuitem"], [role="button"], span, div'),
+    ];
+
+    for (const item of items) {
+      const text = ((item as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+
+      if (
+        /^(pin comment|pin this comment|pin to top|ghim bình luận|pin|ghim)$/i.test(
+          text,
+        )
+      ) {
+        (item as HTMLElement).click();
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
+async function confirmPinDialog(page: any) {
+  const dialog = page.getByRole("dialog").filter({
+    hasText: /pin comment|pin this comment|ghim bình luận|ghim/i,
+  });
+
+  if (!(await dialog.first().isVisible({ timeout: 2500 }).catch(() => false))) {
+    return;
+  }
+
+  const confirm = dialog
+    .first()
+    .getByRole("button", { name: /^(pin|ghim|pin comment|ghim bình luận)$/i })
+    .last();
+
+  if (await confirm.isVisible().catch(() => false)) {
+    await jsClick(confirm);
+  }
+}
+
+async function commentAndPinOnLatestPost(
+  page: any,
+  content: string,
+  comment?: string,
+) {
+  const text = (comment || "").replace(/\s+/g, " ").trim();
+
+  if (!text) {
+    throw new Error("No comment was generated for this post.");
+  }
+
+  await page.waitForTimeout(3000);
+
+  const viewLink = page.getByRole("link", { name: /^(view|see post|xem bài)/i }).first();
+
+  if (await viewLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await jsClick(viewLink);
+    await page.waitForTimeout(4000);
+  } else {
+    await page.goto("https://www.facebook.com/me", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForTimeout(5000);
+  }
+
+  await dismissOverlays(page);
+
+  let post = await waitForOwnPost(page, content, 20000);
+
+  if (!post) {
+    await page.goto("https://www.facebook.com/", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForTimeout(5000);
+    await dismissOverlays(page);
+    post = await waitForOwnPost(page, content, 25000);
+  }
+
+  if (!post) {
+    throw new Error("Could not find the published post to comment on.");
+  }
+
+  await post.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(1000);
+
+  const box = await openCommentBox(page, post);
+  await typeComment(page, box, text);
+  await page.waitForTimeout(3000);
+
+  if (!(await commentAppeared(post, text))) {
+    const send = post
+      .locator(
+        '[aria-label="Comment"], [aria-label="Bình luận"], [aria-label="Press Enter to post"]',
+      )
+      .last();
+
+    if (await send.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await jsClick(send);
+      await page.waitForTimeout(3000);
+    }
+  }
+
+  if (!(await commentAppeared(post, text))) {
+    throw new Error("Comment was typed but did not appear on the post.");
+  }
+
+  log("INFO", `Commented on post: "${text}"`);
+
+  let pinned = false;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const opened = await clickCommentOverflow(page, post, text);
+
+    if (!opened) {
+      await page.waitForTimeout(1000);
+      continue;
+    }
+
+    await page.waitForTimeout(800);
+    pinned = await clickPinAction(page);
+
+    if (pinned) {
+      break;
+    }
+
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(800);
+  }
+
+  if (!pinned) {
+    throw new Error("Pin comment action was not found.");
+  }
+
+  await confirmPinDialog(page);
+  await page.waitForTimeout(2000);
+  log("INFO", "Pinned the comment");
+}
+
 export async function publishPost(
   content: string,
   imagePath?: string,
   profileId?: string,
+  comment?: string,
 ) {
   await startBrowser(profileId);
 
@@ -599,6 +968,17 @@ export async function publishPost(
   }
 
   log("INFO", "Composer closed after publish");
-  log("INFO", "Waiting a few seconds before closing the browser");
-  await page.waitForTimeout(8_000);
+
+  try {
+    await commentAndPinOnLatestPost(page, content, comment);
+  } catch (error) {
+    log(
+      "ERROR",
+      `Post went up, but comment/pin failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  log("INFO", "Leaving the browser open after posting");
 }

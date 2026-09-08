@@ -1,7 +1,6 @@
 import { db, log } from "./db.js";
 import { generatePost } from "./content.js";
 import { publishPost } from "./facebook.js";
-import { stopBrowser } from "./browser.js";
 import {
   loadAccounts,
   resolveAccountProfileId,
@@ -70,7 +69,7 @@ export async function runPublishFlow(account: AccountConfig) {
   const postId = result.lastInsertRowid;
 
   try {
-    await publishPost(content, generated.imagePath, profileId);
+    await publishPost(content, generated.imagePath, profileId, generated.comment);
 
     db.prepare(
       `
@@ -120,8 +119,6 @@ export async function runAllAccounts() {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-    } finally {
-      await stopBrowser().catch(() => {});
     }
 
     if (index < accounts.length - 1) {

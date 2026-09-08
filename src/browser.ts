@@ -70,7 +70,7 @@ export async function startBrowser(profileId?: string) {
   }
 
   if (isContextAlive() && activeProfileId !== resolvedId) {
-    await stopBrowser();
+    await disconnectBrowser();
   }
 
   browser = null;
@@ -177,9 +177,7 @@ export async function openFacebook() {
   });
 }
 
-export async function stopBrowser() {
-  const profileId = activeProfileId;
-
+async function disconnectBrowser() {
   if (browser) {
     await browser.close().catch(() => {});
   }
@@ -188,6 +186,12 @@ export async function stopBrowser() {
   context = null;
   page = null;
   activeProfileId = null;
+}
+
+export async function stopBrowser() {
+  const profileId = activeProfileId;
+
+  await disconnectBrowser();
 
   if (profileId) {
     await stopProfile(profileId).catch((error) => {

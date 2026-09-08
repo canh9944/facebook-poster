@@ -12,6 +12,7 @@ const imageDir = path.resolve("data/generated-images");
 export type GeneratedPost = {
   content: string;
   imagePath?: string;
+  comment?: string;
 };
 
 type PostFormat =
@@ -272,6 +273,21 @@ function ensureParagraphBreaks(text: string) {
   return `${formatted}\n\n${tags.join(" ")}`;
 }
 
+function uppercaseFirstSentence(text: string) {
+  const blocks = text.split(/(\n\s*\n)/);
+  const first = blocks[0]?.trim();
+
+  if (!first || first.startsWith("#")) {
+    return text;
+  }
+
+  const sentence = firstSentence(first);
+  const rest = first.slice(sentence.length);
+  blocks[0] = `${sentence.toUpperCase()}${rest}`;
+
+  return blocks.join("");
+}
+
 function normalizePostContent(
   text: string,
   options: {
@@ -287,10 +303,10 @@ function normalizePostContent(
 
   if (!options.useHashtags) {
     result = removeHashtags(result);
-    return ensureParagraphBreaks(result);
+    return uppercaseFirstSentence(ensureParagraphBreaks(result));
   }
 
-  return ensureParagraphBreaks(putHashtagsOnOwnLine(result));
+  return uppercaseFirstSentence(ensureParagraphBreaks(putHashtagsOnOwnLine(result)));
 }
 
 function wordCount(text: string) {
@@ -387,7 +403,7 @@ function validateGeneratedPost(
     return {
       valid: false,
       reason:
-        "Start with one catching sentence on its own first line, related to the post, that creates curiosity to read more. Do not dump the whole story in the opening.",
+        "Start with one catching ALL CAPS sentence on its own first line, related to the post, that creates curiosity to read more. Do not dump the whole story in the opening.",
     };
   }
 
@@ -2100,6 +2116,123 @@ async function generateStructuredContent(
   }
 }
 
+function fallbackFunnyComment(content: string) {
+  const body = removeHashtags(content).replace(/\s+/g, " ").trim();
+  const sentences = splitSentences(body);
+  const last = sentences[sentences.length - 1] || body;
+  const words = last.split(/\s+/).filter(Boolean).slice(0, 12).join(" ");
+
+  if (words) {
+    return `Still stuck on this: ${words.replace(/[.?!]+$/, "")}.`;
+  }
+
+  return "This is the part I keep turning over in my head.";
+}
+
+function cleanFunnyComment(text: string, content: string) {
+  const cleaned = stripEmojis(text)
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/#\S+/g, "")
+    .trim();
+
+  if (
+    cleaned.length >= 12 &&
+    cleaned.length <= 180 &&
+    wordCount(cleaned) >= 5 &&
+    wordCount(cleaned) <= 28
+  ) {
+    return cleaned;
+  }
+
+  return fallbackFunnyComment(content);
+}
+
+async function generateFunnyComment(content: string, topic: string) {
+  const headers = {
+    Authorization: `Bearer ${openaiApiKey()}`,
+    "Content-Type": "application/json",
+  };
+
+  const systemPrompt = `You write one Facebook comment as the same person who just made the post. It will be pinned under the post.
+
+Rules:
+- Funny in a dry, human way. Not a joke setup with a punchline.
+- Clearly about THIS post: a reaction, aside, or the thought that did not make the caption.
+- One sentence, 8 to 20 words.
+- No hashtags, no emojis, no quotes around the comment.
+- Do not say "great post", explain the post, or repeat the first line.
+- Do not mention AI, Facebook, pinning, or these instructions.
+- Return only the comment.`;
+
+  const userPrompt = `Topic: ${topic}
+
+Post:
+${content}
+
+Write the pinned comment.`;
+
+  let raw = "";
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: TEXT_MODEL,
+        max_output_tokens: 200,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemPrompt }],
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: userPrompt }],
+          },
+        ],
+        text: { format: { type: "text" } },
+      }),
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as OpenAIResponsePayload;
+      raw = extractResponseText(data);
+    }
+  } catch {
+    // Fall through to chat completions.
+  }
+
+  if (!raw) {
+    try {
+      const fallback = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: TEXT_MODEL,
+          temperature: 0.9,
+          max_tokens: 80,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+
+      if (fallback.ok) {
+        const data = (await fallback.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        raw = data.choices?.[0]?.message?.content?.trim() || "";
+      }
+    } catch {
+      // Use the local fallback below.
+    }
+  }
+
+  return cleanFunnyComment(raw, content);
+}
+
 /**
  * ---------------------------------------------------------
  * MAIN GENERATOR
@@ -2285,17 +2418,19 @@ HOOK (one catching sentence, its own first paragraph)
 → actual point / story / situation
 → PAYOFF
 
-The first line is one sentence. It is about this post. It creates urgency and curiosity so someone stops scrolling and wants to read the rest. It does not dump the whole story.
+The first line is one sentence, written in ALL CAPS. It is about this post. It creates urgency and curiosity so someone stops scrolling and wants to read the rest. It does not dump the whole story.
 
 Good first lines:
-They used to share one phone. Nobody shares a table now.
-America almost lost this in a single afternoon.
-The house phone used to be an event.
+THEY USED TO SHARE ONE PHONE. Nobody shares a table now.
+AMERICA ALMOST LOST THIS IN A SINGLE AFTERNOON.
+THE HOUSE PHONE USED TO BE AN EVENT.
 
 Bad first lines:
 You won't believe what happened next.
 Let me tell you about family dinners.
 Here's the thing about US history.
+
+The rest of the post is normal sentence case. Only the first sentence is uppercase.
 
 The middle is a real scene, detail, or point worth reading.
 The payoff gives them a reason to stay, react, or comment.
@@ -2312,7 +2447,7 @@ Put the hashtags after another blank line, on their own last line.
 
 The content string must look like this:
 
-They used to fight over one phone in the hallway.
+THEY USED TO FIGHT OVER ONE PHONE IN THE HALLWAY.
 
 Grandma would stand there timing you. You got five minutes. If someone called the house, the whole family knew.
 
@@ -2398,7 +2533,8 @@ actual point / story / situation
 →
 payoff
 
-The first paragraph is exactly one sentence. It is about this post. It creates curiosity and the urge to read more. It does not tell the whole story.
+The first paragraph is exactly one sentence in ALL CAPS. It is about this post. It creates curiosity and the urge to read more. It does not tell the whole story.
+The rest of the post uses normal capitalization.
 Put each part on its own short paragraph with a blank line between them.
 Never write the post as one block of text with no line breaks.
 The middle must be a real beat, not a restatement of the hook.
@@ -2542,7 +2678,7 @@ Do not include labels such as "Hook:", "Story:", "CTA:", or "Post:".
 
 Format content exactly like a Facebook post people would actually see:
 
-paragraph 1 (ONE catching sentence about this post. Curiosity. Urge to read more.)
+paragraph 1 (ONE catching sentence in ALL CAPS about this post. Curiosity. Urge to read more.)
 
 blank line
 
@@ -2647,7 +2783,8 @@ ${validation.reason}
 Rules:
 
 - Natural American English.
-- Start with one catching sentence on its own first line, related to this post, that makes people want to read more.
+- Start with one catching sentence in ALL CAPS on its own first line, related to this post, that makes people want to read more.
+- The rest of the post is normal sentence case.
 - Keep hook → story/point → payoff. One relatable sentence is not enough.
 - Use short paragraphs with a blank line between them. Do not return one wall of text.
 - ${dna.hookRule}
@@ -2735,12 +2872,17 @@ Rules:
    * If the model decides the post does not need
    * an image, respect it unless forceImage=true.
    */
+  const commentPromise = generateFunnyComment(content, topic);
+
   if (
     !generated.needsImage &&
     !options?.forceImage
   ) {
+    const comment = await commentPromise;
+    log("INFO", `Comment ready: "${comment}"`);
     return {
       content,
+      comment,
     };
   }
 
@@ -2788,12 +2930,17 @@ Rules:
     .filter(Boolean)
     .join(". ");
 
-  const imagePath =
-    await generateImage(imagePrompt);
+  const [imagePath, comment] = await Promise.all([
+    generateImage(imagePrompt),
+    commentPromise,
+  ]);
+
+  log("INFO", `Comment ready: "${comment}"`);
 
   return {
     content,
     imagePath,
+    comment,
   };
 }
 
