@@ -36,7 +36,9 @@ type InspirationSource =
   | "old_tv"
   | "90s_culture"
   | "us_news"
-  | "us_history";
+  | "us_history"
+  | "football_news"
+  | "vietnam_life";
 
 type HookMechanism =
   | "recognition"
@@ -175,14 +177,38 @@ const GENERIC_HASHTAGS = new Set(
     "makingmemories",
     "cherisheverymoment",
     "liveinthemoment",
+    "thathinh",
+    "thinh",
+    "flirt",
+    "flirting",
+    "quote",
+    "quotes",
   ].map((tag) => tag.toLowerCase()),
 );
+
+function foldHashtag(tag: string) {
+  return tag
+    .replace(/^#/, "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+function isFlirtHashtag(tag: string) {
+  const folded = foldHashtag(tag);
+  return /thathinh|thathin|thinh|flirt|quotes?$/.test(folded);
+}
 
 function isGenericHashtag(tag: string) {
   const raw = tag.replace(/^#/, "");
   const normalized = raw.toLowerCase();
+  const folded = foldHashtag(tag);
 
-  if (GENERIC_HASHTAGS.has(normalized)) {
+  if (GENERIC_HASHTAGS.has(normalized) || GENERIC_HASHTAGS.has(folded)) {
+    return true;
+  }
+
+  if (isFlirtHashtag(tag)) {
     return true;
   }
 
@@ -329,6 +355,13 @@ function hasGenericAIPhrase(text: string) {
     /little did i know/i,
     /i couldn't believe/i,
     /who else can relate/i,
+    /hãy sống hết mình/i,
+    /cuộc sống là những chuyến đi/i,
+    /bạn sẽ không tin/i,
+    /hãy yêu bản thân/i,
+    /đẹp như một giấc mơ/i,
+    /cánh hoa mong manh/i,
+    /nơi này đẹp quá/i,
     /can anyone else relate/i,
     /steal (my|the) spotlight/i,
     /sense of shame/i,
@@ -373,6 +406,7 @@ function validateGeneratedPost(
     minWords: number;
     maxWords: number;
     shortFunnyHook?: boolean;
+    useHashtags?: boolean;
   },
 ) {
   const body = removeHashtags(content);
@@ -383,6 +417,7 @@ function validateGeneratedPost(
   const hook = firstParagraph(body);
   const hookWords = wordCount(hook);
   const hookSentences = sentenceCount(hook);
+  const requireHashtags = rules.useHashtags !== false;
 
   if (words < rules.minWords || sentences < 3) {
     return {
@@ -414,7 +449,7 @@ function validateGeneratedPost(
     };
   }
 
-  if (tags.length < 2 || tags.length > 4) {
+  if (requireHashtags && (tags.length < 2 || tags.length > 4)) {
     return {
       valid: false,
       reason:
@@ -422,7 +457,7 @@ function validateGeneratedPost(
     };
   }
 
-  if (genericTags.length) {
+  if (requireHashtags && genericTags.length) {
     return {
       valid: false,
       reason: `Hashtags are too generic or AI-generated (${genericTags.join(" ")}). Use specific tags that match the post.`,
@@ -565,6 +600,115 @@ async function collectUSNewsDrama() {
   return shuffle(unique).slice(0, 10);
 }
 
+async function collectFootballNews() {
+  const week = encodeURIComponent(
+    '(Cristiano Ronaldo OR Lionel Messi OR "Al Nassr" OR "Inter Miami") (match OR goal OR transfer OR news) when:7d',
+  );
+  const ronaldo = encodeURIComponent("Cristiano Ronaldo when:7d");
+  const messi = encodeURIComponent("Lionel Messi when:7d");
+  const football = encodeURIComponent(
+    "(football OR soccer) (Ronaldo OR Messi) when:7d",
+  );
+
+  const [ronaldoNews, messiNews, footballNews, weekNews, soccer, soccerReddit, cr7, messiSub] =
+    await Promise.allSettled([
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${ronaldo}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${messi}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${football}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${week}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+      fetchRedditStories("soccer", 0),
+      fetchRedditStories("football", 0),
+      fetchRedditStories("CristianoRonaldo", 0),
+      fetchRedditStories("Messi", 0),
+    ]);
+
+  const headlines: string[] = [];
+
+  for (const result of [ronaldoNews, messiNews, footballNews, weekNews]) {
+    if (result.status === "fulfilled") {
+      headlines.push(...result.value);
+    }
+  }
+
+  for (const result of [soccer, soccerReddit, cr7, messiSub]) {
+    if (result.status === "fulfilled") {
+      headlines.push(
+        ...result.value.map((story) => story.title).filter(Boolean),
+      );
+    }
+  }
+
+  const unique = headlines.filter(
+    (title, index, list) =>
+      title &&
+      list.findIndex((item) => item === title) === index &&
+      /ronaldo|messi|cr7|al nassr|inter miami|portugal|argentina|soccer|football|goal|hat-trick|champions|world cup|hat trick/i.test(
+        title,
+      ),
+  );
+
+  if (unique.length) {
+    return shuffle(unique).slice(0, 10);
+  }
+
+  return shuffle(headlines.filter(Boolean)).slice(0, 10);
+}
+
+const VIETNAM_SEEDS = [
+  "Anh bảo đi Đà Lạt cho mát. Mát thì mát. Seen từ tối hôm qua.",
+  "Không phải đang thả thính. Chỉ hỏi ăn cơm chưa. Lần thứ bảy.",
+  "Ghế cửa sổ còn trống. Không giữ chỗ. Chỉ chưa cho ai ngồi.",
+  "Hội An đẹp thật. Đẹp hơn nếu có người trả lời tin nhắn.",
+  "Biển Đà Nẵng gió lớn. Vẫn thua cái seen của anh.",
+  "Cà phê hết từ lâu. Em vẫn ngồi. Không phải đợi. Em chỉ chưa đứng dậy.",
+  "Sài Gòn kẹt xe. Có thời gian nghĩ lung tung. Toàn nghĩ tới một người.",
+  "Hà Nội mưa. Em vào quán. Bàn hai người. Em ngồi một.",
+  "Phú Quốc hoàng hôn. Chụp ảnh xong lại mở chat. Vẫn để đó.",
+  "Máy bay, ghế cửa sổ. Tai nghe. Không nhắn. Giữ chỗ bên cạnh cho vui.",
+  "Đà Lạt lạnh. Áo mỏng. Không phải em không biết. Em chỉ thích được hỏi có lạnh không.",
+  "Quán quen. Ly cũ. Nhân viên hỏi đợi ai. Em nói không. Nói nhỏ quá.",
+  "Nha Trang muối trên môi. Muốn gửi cho anh. Xong lại thôi, sợ anh hiểu đúng.",
+  "Ban công tối. Thành phố ở dưới. Tin nhắn soạn xong rồi xóa.",
+  "Đừng hiểu nhầm. Em hỏi anh bận không là em có chuyện. Chuyện là nhớ.",
+];
+
+async function collectVietnamInspiration() {
+  const travel = encodeURIComponent("du lịch Việt Nam when:14d");
+  const [travelNews, destinationNews] = await Promise.allSettled([
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${travel}&hl=vi-VN&gl=VN&ceid=VN:vi`,
+    ),
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(
+        "Đà Lạt OR Hội An OR Phú Quốc OR Đà Nẵng OR Sapa",
+      )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
+    ),
+  ]);
+
+  const headlines: string[] = [...VIETNAM_SEEDS];
+
+  for (const result of [travelNews, destinationNews]) {
+    if (result.status === "fulfilled") {
+      headlines.push(...result.value);
+    }
+  }
+
+  const unique = headlines.filter(
+    (title, index, list) =>
+      title && list.findIndex((item) => item === title) === index,
+  );
+
+  return shuffle(unique).slice(0, 10);
+}
+
 const US_HISTORY_EVENTS = [
   "1776: The Declaration of Independence is adopted in Philadelphia",
   "1863: Lincoln delivers the Gettysburg Address",
@@ -662,6 +806,111 @@ async function collectUSHistoryEvents() {
  */
 
 const PAGE_DNA: Record<string, PageDna> = {
+  vietnam: {
+    identity:
+      "A Vietnamese Facebook page that sounds like a real girl texting friends: human, flirty, a subtle joke under the line. Travel, cafe, rain, a leftover seat, a seen-and-ignored message. Spoken Vietnamese. Teasing, never poetic caption-speak, never a brochure.",
+
+    pillars: [
+      "thả thính: câu tán tỉnh nhẹ, đùa một chút, như đang nhắn cho một người",
+      "đi chơi / du lịch nhưng vẫn thả thính: Đà Lạt, Hội An, biển, ghế cửa sổ",
+      "đời sống: cà phê, tin nhắn để đó, mưa, quán quen, chuyện nhỏ mà để ý",
+      "joke nhỏ: phủ nhận đang thả thính rồi vẫn thả, giữ chỗ rồi bảo không giữ",
+      "nói chuyện với 'anh' như đang trêu, không viết quote sâu sắc",
+    ],
+
+    emotions: [
+      "đang trêu một người",
+      "thả thính mà giả bộ vô tình",
+      "cười nhẹ vì chuyện nhỏ",
+      "nhớ mà không chịu nhận",
+      "đi chơi nhưng nghĩ tới ai đó",
+      "human and a little naughty",
+    ],
+
+    inspirationSources: ["vietnam_life", "pinterest"],
+
+    formats: [
+      "funny",
+      "funny",
+      "observation",
+      "question",
+      "relatable",
+    ],
+
+    hookMechanisms: [
+      "curiosity",
+      "confession",
+      "specific_detail",
+      "identity",
+      "observation",
+    ],
+
+    imageStrategy:
+      "Photorealistic photo of a beautiful adult Vietnamese woman in her 20s: natural makeup, elegant, tasteful, not sexualized, not a real celebrity. She is the subject of the photo. Setting matches the post: cafe, travel, beach, rainy street, balcony, golden hour. Overlay a short readable Vietnamese hook that is flirty with a subtle joke. Do not recap the whole post. No logos, watermarks, collage, or split screen.",
+
+    allowEmojis: false,
+    useHashtags: false,
+    minWords: 35,
+    maxWords: 130,
+    lengthGuide:
+      "Usually 40-90 Vietnamese words. Talk like a person, not a caption. Short. A tease and a small joke are enough.",
+    hookRule:
+      "Start with one catching sentence, on its own first line, in ALL CAPS, in Vietnamese. Human. Flirty. A little mischievous. Then a concrete scene. Payoff is a subtle joke or a tease, not a sad poem. Do not dump the whole thought in the first line.",
+  },
+
+  football: {
+    identity:
+      "A football Facebook page about Cristiano Ronaldo, Lionel Messi, and the latest matches, news, stats, and drama around them. Sounds like a fan talking to other fans, not a sports desk. Current, specific, sometimes funny. Never a Wikipedia recap.",
+
+    pillars: [
+      "Cristiano Ronaldo latest news, matches, and goals",
+      "Lionel Messi latest news, matches, and goals",
+      "Ronaldo vs Messi moments people are still arguing about",
+      "big match results, hat-tricks, records, and transfers",
+      "Al Nassr, Inter Miami, Portugal, Argentina, and club form",
+      "viral football moments and fan reactions this week",
+    ],
+
+    emotions: [
+      "wait, he actually did that",
+      "the GOAT debate is back",
+      "I cannot believe this scoreline",
+      "that goal is still insane",
+      "everyone is talking about this match",
+      "curiosity",
+    ],
+
+    inspirationSources: ["football_news"],
+
+    formats: [
+      "observation",
+      "funny",
+      "unexpected",
+      "question",
+      "relatable",
+    ],
+
+    hookMechanisms: [
+      "curiosity",
+      "unexpected",
+      "specific_detail",
+      "observation",
+      "identity",
+    ],
+
+    imageStrategy:
+      "Photorealistic football photography: stadium, floodlights, pitch, crowd, ball, kit colors. Number 7 or 10 seen from behind, a silhouette, or a packed stand. Do not generate a photorealistic identifiable face of a real player. Overlay a short readable hook that creates curiosity, a laugh, or an emotional hit. Do not recap the whole post. No logos, watermarks, collage, or split screen.",
+
+    allowEmojis: false,
+    useHashtags: true,
+    minWords: 40,
+    maxWords: 150,
+    lengthGuide:
+      "Usually 50-120 words. Stay tight. Facebook fan reaction, not a match report.",
+    hookRule:
+      "Start with one catching sentence, on its own first line, in ALL CAPS, about this exact football story. Tease the news, the match, or the moment. Do not dump the full scoreline and the ending in the first line. Then say what happened. Then a payoff: a reaction, a question, or a dry joke.",
+  },
+
   "us-news": {
     identity:
       "A US Facebook page about two things: the hottest news and drama from the last few days, and real events in US history. Sounds like a regular person talking, not a news anchor or a textbook. Specific, sometimes funny, never a lecture.",
@@ -704,7 +953,7 @@ const PAGE_DNA: Record<string, PageDna> = {
     ],
 
     imageStrategy:
-      "A photorealistic image matching the post. For current news: a setting, crowd, city, object, or generic scene. For history: a period-accurate American scene, object, or place. Do not depict a recognizable real celebrity, politician, or historical portrait. Overlay a short readable summary of the post on the photo. No logos, watermarks, collage, or split screen.",
+      "A photorealistic image matching the post. For current news: a setting, crowd, city, object, or generic scene. For history: a period-accurate American scene, object, or place. Do not depict a recognizable real celebrity, politician, or historical portrait. Overlay a short readable hook on the photo that creates curiosity, a laugh, or an emotional hit. Do not recap the whole post on the image. No logos, watermarks, collage, or split screen.",
 
     allowEmojis: false,
     useHashtags: true,
@@ -772,24 +1021,25 @@ const PAGE_DNA: Record<string, PageDna> = {
 
   family: {
     identity:
-      "A funny American family page that compares family life in the old days with family life now. One specific contrast per post: dinner, phones, weekends, chores, TV, getting in trouble, calling friends, privacy, road trips. Interesting and funny. Never a lecture about kids these days.",
+      "A funny, quite dramatic American family page. Sitcom energy: one specific household crisis per post, stakes that feel huge for something small, a laugh in the chaos. Old-school, modern, or then-vs-now. Never a lecture, never a soft greeting-card moment.",
 
     pillars: [
-      "family dinner then vs phones at the table now",
-      "one house phone vs everyone on a smartphone",
-      "playing outside until streetlights vs staying inside",
-      "getting lost and asking a stranger vs GPS",
-      "Saturday morning cartoons vs streaming",
-      "handwritten notes and landlines vs group chats",
-      "grandparents' rules vs parenting now",
+      "old-school family drama: rotary phones, Sunday dinner rules, Polaroids, streetlights, getting in trouble",
+      "modern family chaos: group chats, GPS arguments, school apps, streaming fights, everyone on a different screen",
+      "funny sibling and parent blowups that actually happen",
+      "holidays, road trips, bedtime, chores, and the little rules families treat like law",
+      "then vs now: one specific contrast, funny and over-the-top, not a rant",
+      "grandparents, in-laws, kids, and the theatrical chaos of sharing a house",
     ],
 
     emotions: [
-      "that's exactly my childhood",
+      "this household is a soap opera",
       "family humor",
-      "I forgot we used to do that",
-      "now vs then is ridiculous",
-      "recognition",
+      "the stakes were ridiculous",
+      "I cannot believe this was about leftovers",
+      "modern family is chaos",
+      "dramatic and funny",
+      "that's exactly my family",
     ],
 
     inspirationSources: [
@@ -797,35 +1047,39 @@ const PAGE_DNA: Record<string, PageDna> = {
       "old_products",
       "old_tv",
       "90s_culture",
+      "reddit",
+      "pinterest",
     ],
 
     formats: [
-      "before_after",
-      "before_after",
       "funny",
-      "nostalgia",
+      "funny",
+      "unexpected",
       "observation",
+      "before_after",
+      "relatable",
     ],
 
     hookMechanisms: [
-      "nostalgia",
-      "specific_detail",
-      "recognition",
       "unexpected",
+      "specific_detail",
+      "curiosity",
       "observation",
+      "recognition",
+      "confession",
     ],
 
     imageStrategy:
-      "One photorealistic American family photo matching the contrast in the post, either an old-days home scene or a nowadays home scene. Natural light, slightly imperfect framing. Overlay a short readable summary of the post in large text. No split screen, no collage, no logos, no watermarks.",
+      "One photorealistic American family photo matching THIS post: an old-days home scene, a nowadays home scene, or a mid-chaos family moment. Natural light, slightly imperfect framing. Overlay a short readable hook in large text that is funny and quite dramatic. Do not recap the whole post. Do not use a soft or sentimental line. No split screen, no collage, no logos, no watermarks.",
 
     allowEmojis: false,
     useHashtags: true,
     minWords: 50,
     maxWords: 180,
     lengthGuide:
-      "Usually 70-140 words. Enough to show then and now. Never pad.",
+      "Usually 70-140 words. Enough for one real family crisis. Never pad.",
     hookRule:
-      "Start with one catching sentence, on its own first line, about this specific then-vs-now family contrast. It should make people curious to read the rest. Then show how it worked in the old days, how it works now, and land on a funny recognition. Do not moralize. Do not say the past was simply better.",
+      "Start with one catching sentence, on its own first line, in ALL CAPS, about this exact family moment. Funny and quite dramatic. Tease the household crisis without dumping the ending. Then tell the scene with sitcom stakes. Land on a laugh. Do not moralize. Do not go soft or sentimental.",
   },
 
   nostalgia: {
@@ -880,7 +1134,7 @@ const PAGE_DNA: Record<string, PageDna> = {
     ],
 
     imageStrategy:
-      "Authentic-looking American nostalgia photography. Specific period details matter: old electronics, family rooms, school supplies, stores, cars, kitchens, toys, or neighborhood scenes. A short readable quote related to the memory must appear on the photo. Avoid generic fake vintage filters.",
+      "Authentic-looking American nostalgia photography. Specific period details matter: old electronics, family rooms, school supplies, stores, cars, kitchens, toys, or neighborhood scenes. Overlay a short readable hook that creates curiosity, a laugh, or an emotional hit. Avoid generic fake vintage filters.",
 
     allowEmojis: false,
     useHashtags: true,
@@ -922,6 +1176,88 @@ He was behind the curtain with his butt still out.
 I was wiping the counter. He sat there like I couldn't see him.
 
 I can see you. The curtain is see-through.
+`;
+
+const VIETNAM_VOICE_RULES = `
+VIETNAMESE PAGE VOICE (required)
+
+Write the entire post in Vietnamese. Spoken Facebook Vietnamese, as if a real girl is typing on her phone. Human. Flirty. A subtle joke. Not English. Not a poem. Not a travel caption.
+
+Every post should feel like she is talking to one person, even if the topic is a trip or a cafe.
+
+Do this:
+- Start with one catching sentence on its own first line, in ALL CAPS, in Vietnamese.
+- Talk the way people actually chat: ngắn, hơi trêu, có chỗ ngắt, không trau chuốt.
+- Flirt: nói với "anh", giả bộ vô tình, phủ nhận đang thả thính rồi vẫn thả.
+- Subtle joke: understatement, tự nhận, một câu để người đọc cười nhẹ. Not a punchline. Not "haha".
+- One concrete scene: quán, tin nhắn seen, ghế trống, mưa, Đà Lạt lạnh, ly cà phê hết từ lâu.
+- Payoff is the tease or the small joke.
+
+Good:
+Anh bảo đi Đà Lạt cho mát. Mát thì mát. Tin nhắn anh vẫn để đó từ tối hôm qua.
+Không phải em thả thính. Em chỉ hỏi anh ăn cơm chưa. Lần thứ bảy.
+Ghế cạnh cửa sổ còn trống. Không phải em giữ. Em chỉ chưa cho ai ngồi.
+
+Bad:
+Hãy sống hết mình vì cuộc đời là những chuyến đi.
+Đà Lạt đẹp như một giấc mơ.
+Em như cánh hoa mong manh giữa đời.
+Nếu anh là biển, em nguyện làm cát.
+
+Do not do this:
+- Write in English
+- Sound literary, fake-deep, or like a quote graphic
+- Sound like a tour company
+- Sexual, vulgar, or desperate
+- A sad lonely-girl poem
+- Mention Reddit, Google, AI, or sources
+`;
+
+function vietnamTrackRules(
+  track: "travel" | "life" | "flirting",
+) {
+  if (track === "travel") {
+    return `${VIETNAM_VOICE_RULES}
+
+THIS POST TRACK: travel
+One place, one moment. Still flirty. Still a small joke. Đà Lạt lạnh, biển, ghế cửa sổ, đi một mình nhưng câu chuyện là đang nghĩ tới ai. Not a brochure. Not "nơi này đẹp quá".`;
+  }
+
+  if (track === "life") {
+    return `${VIETNAM_VOICE_RULES}
+
+THIS POST TRACK: life
+Cafe, rain, a seen message, a familiar table. Human and teasing. The joke is small. Do not lecture about living in the moment.`;
+  }
+
+  return `${VIETNAM_VOICE_RULES}
+
+THIS POST TRACK: flirting
+Thả thính. Talk to "anh". Deny it, then do it anyway. Clever, warm, a little naughty. Subtle joke at the end. Not crude. Not a copied famous quote.`;
+}
+
+const FOOTBALL_VOICE_RULES = `
+FOOTBALL PAGE VOICE (required)
+
+Write about real, current football. Especially Cristiano Ronaldo and Lionel Messi: latest news, matches, goals, records, club form, national team, rivalry, or related drama.
+
+Pick ONE story from the provided headlines.
+Talk like a fan on Facebook, not a commentator reading a script.
+
+Do this:
+- Start with one catching sentence on its own first line, in ALL CAPS. Related to this story. Makes people curious to read more.
+- Stay current. This week if the headlines are current. Do not invent a match that did not happen.
+- Name who, what club or country, and what happened, clearly enough that fans know the story.
+- A reaction, a question, or a dry joke is the payoff.
+- If details are thin, do not invent scores, quotes, or transfers.
+
+Do not do this:
+- Fake breaking news or fake match results
+- Pretend you were in the stadium unless the post is clearly a fan watching on TV
+- Write a match report or Wikipedia recap
+- Copy a headline as the whole post
+- Lecture about who the real GOAT is unless the story itself is the debate
+- Mention Reddit, Google News, or sources
 `;
 
 const NEWS_VOICE_RULES = `
@@ -973,26 +1309,57 @@ Do not do this:
 - Mention Wikipedia, Google, or sources
 `;
 
-const FAMILY_THEN_NOW_VOICE_RULES = `
-FAMILY THEN VS NOW VOICE (required)
+const FAMILY_VOICE_RULES = `
+FAMILY PAGE VOICE (required)
 
-Write about one interesting comparison between family life in the old days and family life now.
+Write like a real person posting about family. Funny. Quite dramatic. Sitcom energy. One household crisis per post.
 
 Do this:
-- Start with one catching sentence on its own first line. Related to this then-vs-now contrast. Makes people curious to read more.
-- Pick one specific thing: dinner, the phone, weekends, chores, TV, getting in trouble, calling a friend, car trips, privacy, bedtime.
-- Show how it worked then, in a concrete scene.
-- Show how it works now, in a concrete scene.
-- Make the contrast funny or interesting. The laugh is in the difference.
-- People should think "that's so true."
+- Start with one catching sentence on its own first line, in ALL CAPS. Related to this exact story. Funny and dramatic enough that people have to read the rest.
+- Stay in the assigned track for this post. Do not turn every post into then vs now.
+- Use a concrete scene: a room, a person, an object, a rule, a habit. Raise the stakes. Treat a small family thing like it was a federal case.
+- The payoff is a laugh. The drama is in how seriously everyone took it.
+- People should think "that's so true" and also "this family is unhinged."
 
 Do not do this:
+- Soft, warm, quietly emotional, or greeting-card
 - A generic "kids these days" rant
 - Saying the past was simply better
-- A sad lecture
+- A sad lecture or motivational poster
 - Comparing ten things in one post
 - Inventing fake statistics
+- Forcing a then-vs-now structure when the track is only old-school, only modern, or only funny
 `;
+
+function familyTrackRules(
+  track: "old_school" | "modern" | "funny" | "then_now",
+) {
+  if (track === "old_school") {
+    return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: old-school family
+Write about one old-school family thing with funny, quite dramatic stakes. Rotary phones, Sunday dinner, Polaroids, streetlights, handwritten notes, one TV, grandparents' house, getting in trouble, calling a friend's house and talking to their mom first. Make the house feel like a courtroom or a soap opera. Do not spend the post explaining how everything is worse now.`;
+  }
+
+  if (track === "modern") {
+    return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: modern family
+Write about one modern family thing with funny, quite dramatic stakes. Group chats, GPS arguments, kids FaceTiming grandparents, school apps, streaming fights, AirTags, everyone on a different screen in the same room, packing for travel with chargers. The fight should feel huge. Do not turn it into a phone-bad lecture.`;
+  }
+
+  if (track === "funny") {
+    return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: funny family
+Write one funny, quite dramatic family moment. Siblings, parents, kids, in-laws, holidays, chores, pets in the house, a rule that made no sense. Play it like a sitcom scene. The laugh is in how extra everyone was. It can be old-school or modern. Do not force a moral.`;
+  }
+
+  return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: then vs now
+Write about one comparison between family life in the old days and family life now. Pick one specific thing. Show how it worked then, in a concrete scene. Show how it works now, in a concrete scene. Both sides should feel funny and quite dramatic. The laugh is in the difference. Do not say the past was simply better.`;
+}
 
 /**
  * ---------------------------------------------------------
@@ -1063,7 +1430,7 @@ function resolvePageDna(options?: {
       ],
 
       imageStrategy:
-        "Authentic-looking candid smartphone photography matching the story. Natural lighting, ordinary environments, realistic people and objects. A short readable quote related to the post must appear on the photo. No logos or watermarks.",
+        "Authentic-looking candid smartphone photography matching the story. Natural lighting, ordinary environments, realistic people and objects. Overlay a short readable hook that creates curiosity, a laugh, or an emotional hit. No logos or watermarks.",
 
       allowEmojis: false,
       useHashtags: true,
@@ -1184,6 +1551,27 @@ const PINTEREST_SEEDS: Record<string, string[]> = {
     "backyard hose on a summer afternoon",
     "grandparents' living room at dusk with the television on",
     "shoes piled near the front door",
+    "family group chat lighting up a phone on the kitchen counter",
+    "kids FaceTiming a grandparent at the table",
+    "car GPS rerouting while a parent argues with it",
+  ],
+
+  vietnam: [
+    "beautiful adult Vietnamese woman at a Đà Lạt pine cafe in morning mist",
+    "beautiful adult Vietnamese woman in Hội An lantern street at dusk",
+    "beautiful adult Vietnamese woman on a Phú Quốc beach at golden hour",
+    "beautiful adult Vietnamese woman at a Hà Nội cafe window in the rain",
+    "beautiful adult Vietnamese woman on a Sài Gòn balcony at night",
+    "beautiful adult Vietnamese woman looking out an airplane window",
+  ],
+
+  football: [
+    "packed football stadium under floodlights from behind the goal",
+    "soccer ball on wet grass at night with empty stands blurred",
+    "number 7 jersey seen from behind walking onto the pitch",
+    "number 10 jersey from behind in a packed away stand",
+    "floodlit pitch and crowd with no identifiable player faces",
+    "scarf and foam finger in a noisy football terrace",
   ],
 
   nostalgia: [
@@ -1308,6 +1696,19 @@ async function fetchRedditStories(
 }
 
 function redditSubsForTopic(topic: string) {
+  if (/vietnam|vietnamese|du lich|dulich/i.test(topic)) {
+    return ["travel", "solotravel", "vietnam"];
+  }
+
+  if (/football|soccer|ronaldo|messi/i.test(topic)) {
+    return [
+      "soccer",
+      "football",
+      "CristianoRonaldo",
+      "Messi",
+    ];
+  }
+
   if (/pet|dog|cat|animal/i.test(topic)) {
     return [
       "Pets",
@@ -1383,7 +1784,25 @@ async function collectInspiration(
         ? "family"
         : /nostalgia|80s|90s|retro|vintage/i.test(topic)
           ? "nostalgia"
+          : /football|soccer|ronaldo|messi/i.test(topic)
+            ? "football"
+            : /vietnam|vietnamese|du lich|dulich/i.test(topic)
+              ? "vietnam"
           : "";
+
+  if (source === "vietnam_life") {
+    return collectVietnamInspiration();
+  }
+
+  if (source === "football_news") {
+    const headlines = await collectFootballNews();
+
+    if (headlines.length) {
+      return headlines;
+    }
+
+    return topicTrends("Cristiano Ronaldo Lionel Messi football");
+  }
 
   if (source === "us_history") {
     const events = await collectUSHistoryEvents();
@@ -1560,6 +1979,14 @@ function quoteBankForTopic(topic: string) {
 function quoteSearchTerms(topic: string, content: string) {
   const text = `${topic} ${content}`.toLowerCase();
 
+  if (/vietnam|vietnamese|du lich|dulich/i.test(topic)) {
+    return ["travel", "love", "life", "ocean", "night"];
+  }
+
+  if (/football|soccer|ronaldo|messi/i.test(topic)) {
+    return ["ronaldo", "messi", "football", "soccer", "goal"];
+  }
+
   if (/us-news/i.test(topic)) {
     return ["truth", "america", "history", "freedom", "news"];
   }
@@ -1661,16 +2088,17 @@ async function fetchInternetQuotes(terms: string[]) {
 
 function briefFromPost(content: string) {
   const body = removeHashtags(content).replace(/\s+/g, " ").trim();
-  const sentences = splitSentences(body);
-  const story = sentences.slice(1).join(" ") || sentences[0] || body;
-  const cleaned = story.replace(/^["']+|["']+$/g, "").trim();
+  const hook = firstSentence(body)
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+  const cleaned = hook.replace(/\s+/g, " ");
   const words = cleaned.split(/\s+/).filter(Boolean);
 
-  if (words.length <= 16 && cleaned.length <= 110) {
+  if (words.length <= 14 && cleaned.length <= 90) {
     return cleaned;
   }
 
-  return words.slice(0, 14).join(" ");
+  return words.slice(0, 12).join(" ");
 }
 
 function pickQuoteForPost(
@@ -1951,13 +2379,13 @@ const CONTENT_SCHEMA = {
     content: {
       type: "string",
       description:
-        "The full Facebook post. Use short paragraphs separated by blank lines (\\n\\n). Hook, then story, then payoff, then a blank line, then 2-4 hashtags. Never one block of text.",
+        "The full Facebook post. Use short paragraphs separated by blank lines (\\n\\n). Hook, then story, then payoff. Vietnamese posts: no hashtags. Other pages: blank line then 2-4 hashtags. Never one block of text.",
     },
 
     imageQuote: {
       type: "string",
       description:
-        "A 6 to 16 word summary of this exact post, used as text on the image. No celebrity quote. No author name. No hashtags.",
+        "A 6 to 14 word hook for the photo. Related to this exact post. Do not spoil the whole story. No celebrity quote. No author name. No hashtags. For Vietnamese posts, write the line in Vietnamese: human, flirty, a subtle joke, not poetic. For family posts, it MUST be funny and quite dramatic, never sentimental. For other topics, spark curiosity, a laugh, or an emotional hit.",
     },
 
     needsImage: {
@@ -2116,7 +2544,11 @@ async function generateStructuredContent(
   }
 }
 
-function fallbackFunnyComment(content: string) {
+function fallbackFunnyComment(content: string, topic?: string) {
+  if (/vietnam|vietnamese|du lich|dulich/i.test(topic || "")) {
+    return "Thôi. Lần này em không hỏi ăn cơm chưa nữa.";
+  }
+
   const body = removeHashtags(content).replace(/\s+/g, " ").trim();
   const sentences = splitSentences(body);
   const last = sentences[sentences.length - 1] || body;
@@ -2129,7 +2561,7 @@ function fallbackFunnyComment(content: string) {
   return "This is the part I keep turning over in my head.";
 }
 
-function cleanFunnyComment(text: string, content: string) {
+function cleanFunnyComment(text: string, content: string, topic?: string) {
   const cleaned = stripEmojis(text)
     .replace(/^["'`]+|["'`]+$/g, "")
     .replace(/\s+/g, " ")
@@ -2145,7 +2577,7 @@ function cleanFunnyComment(text: string, content: string) {
     return cleaned;
   }
 
-  return fallbackFunnyComment(content);
+  return fallbackFunnyComment(content, topic);
 }
 
 async function generateFunnyComment(content: string, topic: string) {
@@ -2157,7 +2589,13 @@ async function generateFunnyComment(content: string, topic: string) {
   const systemPrompt = `You write one Facebook comment as the same person who just made the post. It will be pinned under the post.
 
 Rules:
-- Funny in a dry, human way. Not a joke setup with a punchline.
+- ${
+    /vietnam|vietnamese|du lich|dulich/i.test(topic)
+      ? "Write the comment in Vietnamese. Human, a little flirty, a subtle joke. Like a second thought she almost did not post. Spoken, not poetic. Not English."
+      : /family/i.test(topic)
+        ? "Funny and quite dramatic. Sitcom energy. Not soft. Not a greeting card."
+        : "Funny in a dry, human way. Not a joke setup with a punchline."
+  }
 - Clearly about THIS post: a reaction, aside, or the thought that did not make the caption.
 - One sentence, 8 to 20 words.
 - No hashtags, no emojis, no quotes around the comment.
@@ -2230,7 +2668,7 @@ Write the pinned comment.`;
     }
   }
 
-  return cleanFunnyComment(raw, content);
+  return cleanFunnyComment(raw, content, topic);
 }
 
 /**
@@ -2286,23 +2724,63 @@ export async function generatePost(options?: {
   const emotion = pick(dna.emotions);
 
   const isFamily = /family/i.test(topic);
-  const format = isFamily ? "before_after" : pick(dna.formats);
+  const isVietnam = /vietnam|vietnamese|du lich|dulich/i.test(topic);
+  const familyTracks = [
+    "funny",
+    "funny",
+    "then_now",
+    "modern",
+    "old_school",
+  ] as const;
+  const familyTrack = isFamily ? pick([...familyTracks]) : null;
+  const format = isVietnam
+    ? pick(["funny", "funny", "observation", "question", "relatable"] as PostFormat[])
+    : familyTrack
+    ? familyTrack === "then_now"
+      ? "before_after"
+      : pick(["funny", "funny", "unexpected", "observation"] as PostFormat[])
+    : pick(dna.formats);
 
   const hookMechanism =
     pick(dna.hookMechanisms);
 
+  const vietnamTracks = ["travel", "life", "flirting"] as const;
+  const vietnamTrack = isVietnam
+    ? pick([
+        "flirting",
+        "flirting",
+        "flirting",
+        "life",
+        "travel",
+      ] as Array<(typeof vietnamTracks)[number]>)
+    : null;
+  const isFootball = /football|soccer|ronaldo|messi/i.test(topic);
   const isUSNews = /us-news|us news/i.test(topic);
   const fb001Track = isUSNews
     ? Math.random() < 0.5
       ? "news"
       : "history"
     : null;
-  const inspirationSource = fb001Track
+  const familyInspiration: InspirationSource[] =
+    familyTrack === "old_school" || familyTrack === "then_now"
+      ? ["historical", "old_products", "old_tv", "90s_culture"]
+      : familyTrack === "modern"
+        ? ["reddit", "pinterest"]
+        : dna.inspirationSources;
+  const inspirationSource = isVietnam
+    ? "vietnam_life"
+    : isFootball
+    ? "football_news"
+    : fb001Track
     ? fb001Track === "news"
       ? "us_news"
       : "us_history"
-    : pick(dna.inspirationSources);
-  const useTrend = fb001Track === "news" ? true : Math.random() < 0.3;
+    : pick(familyTrack ? familyInspiration : dna.inspirationSources);
+  const useTrend = isVietnam
+    ? false
+    : isFootball || fb001Track === "news"
+      ? true
+      : Math.random() < 0.3;
 
   /**
    * Give the model more previous content,
@@ -2330,7 +2808,11 @@ export async function generatePost(options?: {
     ),
 
     useTrend
-      ? topicTrends(topic)
+      ? topicTrends(
+          isFootball
+            ? "Cristiano Ronaldo Lionel Messi football news"
+            : topic,
+        )
       : Promise.resolve([] as string[]),
   ]);
 
@@ -2350,29 +2832,36 @@ export async function generatePost(options?: {
       `${inspirationSource} / ${format} / ` +
       `${hookMechanism}` +
       `${fb001Track ? ` / ${fb001Track}` : ""}` +
+      `${isFootball ? " / football" : ""}` +
+      `${isVietnam && vietnamTrack ? ` / ${vietnamTrack}` : ""}` +
+      `${familyTrack ? ` / ${familyTrack}` : ""}` +
       `${useTrend ? " / trend" : ""}`,
   );
 
   const systemPrompt = `
-You are an elite Facebook content strategist and writer creating organic content for a US audience.
+You are an elite Facebook content strategist and writer creating organic content for a ${isVietnam ? "Vietnamese" : "US"} audience.
 
 Your job is NOT to sound impressive.
 
 Your job is to create a post that a real person would stop reading, recognize themselves in, and possibly respond to.
 ${
-  fb001Track === "news"
+  isVietnam && vietnamTrack
+    ? vietnamTrackRules(vietnamTrack)
+    : isFootball
+    ? FOOTBALL_VOICE_RULES
+    : fb001Track === "news"
     ? NEWS_VOICE_RULES
     : fb001Track === "history"
       ? HISTORY_VOICE_RULES
       : /pet/i.test(topic)
         ? PET_VOICE_RULES
-        : /family/i.test(topic)
-          ? FAMILY_THEN_NOW_VOICE_RULES
+        : familyTrack
+          ? familyTrackRules(familyTrack)
           : ""
 }
 CONTENT PRINCIPLES
 
-1. Write natural American English.
+1. ${isVietnam ? "Write spoken Vietnamese, as if texting. Human. Flirty. A subtle joke. Not a poem. Not English. Not a travel caption." : "Write natural American English."}
 2. Sound human, not like an AI copywriter.
 3. Prefer concrete details over generic emotional language.
 4. Start close to the interesting part.
@@ -2421,14 +2910,21 @@ HOOK (one catching sentence, its own first paragraph)
 The first line is one sentence, written in ALL CAPS. It is about this post. It creates urgency and curiosity so someone stops scrolling and wants to read the rest. It does not dump the whole story.
 
 Good first lines:
-THEY USED TO SHARE ONE PHONE. Nobody shares a table now.
+${
+  isVietnam
+    ? `ANH BẢO EM ĐI ĐÀ LẠT CHO MÁT.
+NẾU ANH SEEN RỒI THÌ CŨNG ĐỪNG GIẢ VỜ.
+KHÔNG PHẢI EM THẢ THÍNH.`
+    : `THEY USED TO SHARE ONE PHONE. Nobody shares a table now.
 AMERICA ALMOST LOST THIS IN A SINGLE AFTERNOON.
-THE HOUSE PHONE USED TO BE AN EVENT.
+THE HOUSE PHONE USED TO BE AN EVENT.`
+}
 
 Bad first lines:
 You won't believe what happened next.
 Let me tell you about family dinners.
 Here's the thing about US history.
+Bạn sẽ không tin điều gì xảy ra tiếp theo.
 
 The rest of the post is normal sentence case. Only the first sentence is uppercase.
 
@@ -2443,19 +2939,27 @@ This is required in the content field.
 
 Write 3 to 5 short paragraphs.
 Put a blank line between every paragraph.
-Put the hashtags after another blank line, on their own last line.
+${isVietnam ? "Do not add hashtags." : "Put the hashtags after another blank line, on their own last line."}
 
 The content string must look like this:
 
-THEY USED TO FIGHT OVER ONE PHONE IN THE HALLWAY.
+${
+  isVietnam
+    ? `KHÔNG PHẢI EM THẢ THÍNH.
+
+Em chỉ hỏi anh ăn cơm chưa. Lần thứ bảy. Anh seen. Em uống hết ly cà phê.
+
+Thôi. Lần thứ tám em hỏi chuyện khác. Anh có lạnh không.`
+    : `THEY USED TO FIGHT OVER ONE PHONE IN THE HALLWAY.
 
 Grandma would stand there timing you. You got five minutes. If someone called the house, the whole family knew.
 
 Now everyone is on their own phone at the same table, and nobody says a word.
 
-#FamilyLife #ThenVsNow
+#FamilyLife #ThenVsNow`
+}
 
-In JSON, that means real newline characters: paragraph, \\n\\n, paragraph, \\n\\n, paragraph, \\n\\n, hashtags.
+In JSON, that means real newline characters: paragraph, \\n\\n, paragraph, \\n\\n, paragraph${isVietnam ? "." : ", \\n\\n, hashtags."}
 
 Do not write the post as one paragraph.
 Do not join sentences with extra spaces instead of line breaks.
@@ -2474,17 +2978,21 @@ A funny post can just be funny. A question post can just be a good question.
 
 HASHTAGS
 
-Hashtags are required.
+${
+  isVietnam
+    ? "Do not use hashtags. No # tags anywhere in the post."
+    : `Hashtags are required.
 
 Use exactly 2-4 hashtags on their own last line, after a blank line.
 
 They must be specific to this post and this topic.
 
-Good: #DogMom #RescueDog #90sKids #FamilyLife #CatPeople
-Bad: #LifeChangingMoment #Blessed #GoodVibesOnly #Heartwarming #RelatableContent #DeepThoughts #MondayMotivation
+Good: #DuLich #Vietnam #DaLat #HoiAn #Cafe #Ronaldo #Messi #Football #FamilyLife
+Bad: #ThaThinh #Quote #Flirt #LifeChangingMoment #Blessed #GoodVibesOnly #Heartwarming #RelatableContent
 
 Do not invent inspirational, vague, or concatenated AI hashtags.
-Do not put hashtags inside the story.
+Do not put hashtags inside the story.`
+}
 
 STYLE
 
@@ -2542,8 +3050,12 @@ The payoff must match the assigned format. Do not default to a valuable lesson.
 
 HASHTAGS
 
-Always include 2-4 relevant hashtags on their own last line after a blank line.
-Never skip hashtags. Never use generic AI hashtags like #LifeChangingMoment.
+${
+  isVietnam
+    ? "Do not use hashtags."
+    : `Always include 2-4 relevant hashtags on their own last line after a blank line.
+Never skip hashtags. Never use generic AI hashtags like #LifeChangingMoment.`
+}
 
 PAGE DNA
 
@@ -2567,8 +3079,12 @@ ${format}
 
 HASHTAGS
 
-Use exactly 2-4 specific hashtags on their own last line after a blank line.
-Do not use generic AI hashtags.
+${
+  isVietnam
+    ? "Do not use hashtags."
+    : `Use exactly 2-4 specific hashtags on their own last line after a blank line.
+Do not use generic AI hashtags.`
+}
 
 EMOJIS
 
@@ -2619,7 +3135,11 @@ ${hookMechanism}
 INSPIRATION SOURCE
 
 ${
-  fb001Track === "news"
+  isVietnam
+    ? "traveling, everyday life, and flirting quotes for a Vietnamese Facebook page"
+    : isFootball
+    ? "latest Ronaldo, Messi, match, and football news from this week"
+    : fb001Track === "news"
     ? "hottest US news and drama from the last few days"
     : fb001Track === "history"
       ? "real events in US history, including on this day"
@@ -2631,7 +3151,15 @@ INSPIRATION
 ${inspiration}
 
 ${
-  fb001Track === "news"
+  isVietnam
+    ? `These are travel, life, and flirting prompts.
+Pick ONE idea. Write the Facebook post in Vietnamese.
+Human, flirting, a subtle joke. Spoken, not poetic. Stay on the assigned track (${vietnamTrack}). Do not write English.`
+    : isFootball
+    ? `These are live football headlines, especially Ronaldo, Messi, matches, and related news.
+Pick ONE real story. Write a Facebook fan reaction to it.
+Do not invent scores, transfers, quotes, or matches.`
+    : fb001Track === "news"
     ? `These are live headlines from the last few days in the US.
 Pick ONE real story. Write a Facebook reaction to it.
 Do not invent news.`
@@ -2687,10 +3215,14 @@ paragraph 2 (what happened)
 blank line
 
 paragraph 3 (payoff)
-
+${
+  isVietnam
+    ? ""
+    : `
 blank line
 
-#Two #ToFour #Hashtags
+#Two #ToFour #Hashtags`
+}
 
 Use real \\n\\n line breaks inside the JSON string. If the post is longer, add another short paragraph, still with blank lines between them. Never one wall of text.
 
@@ -2699,18 +3231,32 @@ ${dna.hookRule}
 ${dna.lengthGuide}
 
 ${
-  fb001Track === "news"
+  isVietnam
+    ? vietnamTrack === "travel"
+      ? "Write the whole post in Vietnamese. Human, flirty, a subtle joke. One place, still talking to 'anh'. Not a brochure. No hashtags."
+      : vietnamTrack === "life"
+        ? "Write the whole post in Vietnamese. Human, flirty, a subtle joke. Cafe, seen message, rain. Talk like a person. No hashtags."
+        : "Write the whole post in Vietnamese. Human thả thính. Talk to 'anh'. Deny it, then do it. Subtle joke, not a poem. No hashtags."
+    : isFootball
+    ? "Write about a real current football story, especially Ronaldo or Messi: news, a match, a goal, form, a record, or related drama. Sound like a fan, not a sports desk. Do not invent facts. Hashtags like #Ronaldo #Messi #Football when they fit."
+    : fb001Track === "news"
     ? "Write about a real US news or drama story from the last few days. Sound like a person, not a news desk. Do not invent facts."
     : fb001Track === "history"
       ? "Write about a real US historical event. Name what happened and when. Sound like a person, not a textbook. Do not invent facts."
       : /pet/i.test(topic)
         ? "Sound like a real owner, not a caption writer. No metaphors. No punchline to the pet. Funny because it happened."
-        : /family/i.test(topic)
-          ? "Compare family life in the old days with nowadays. One specific contrast. Funny and interesting, not a lecture."
+        : familyTrack
+          ? familyTrack === "old_school"
+            ? "Write one old-school family moment. Concrete scene. Funny and quite dramatic. Sitcom stakes. Do not go soft. Do not force a then-vs-now lecture."
+            : familyTrack === "modern"
+              ? "Write one modern family moment. Concrete scene. Funny and quite dramatic. The fight should feel huge. Do not rant about phones."
+              : familyTrack === "funny"
+                ? "Write one funny, quite dramatic family moment. Play it like a sitcom. The laugh is in how extra everyone was."
+                : "Compare family life in the old days with nowadays. One specific contrast. Funny and quite dramatic, not a lecture."
           : ""
 }
 
-End with 2-4 relevant hashtags on their own last line. No generic AI hashtags.
+${isVietnam ? "Do not use hashtags." : "End with 2-4 relevant hashtags on their own last line. No generic AI hashtags."}
 
 The post should feel like something worth seeing in a Facebook feed, not an article.
 
@@ -2718,11 +3264,58 @@ IMAGE
 
 Create a concise image prompt that visually matches the exact situation in the final post.
 
-The photo MUST include a short, readable line that is a summary or brief of THIS post.
+The photo MUST include a short, readable hook line. That line is not a recap. It is bait.
 
-imageQuote must be 6-16 words that recap the post. Not a celebrity quote. Not a generic slogan. No author name.
+imageQuote must be 6-14 words that make someone stop, feel something, and tap to read the rest.
 
-Spell it correctly.
+${
+  isVietnam
+    ? `For this Vietnamese post, imageQuote MUST be Vietnamese. 6-14 words. Human, flirty, a subtle joke. Spoken, not poetic. Not English. Not a celebrity quote.
+
+Good:
+Không phải em thả thính.
+Anh seen rồi thì cũng được.
+Ghế này chưa cho ai ngồi.
+
+Bad:
+Nếu anh là biển em là cát.
+Live, laugh, love.
+Đà Lạt đẹp như giấc mơ.
+Life is about family.`
+    : isFamily
+    ? `For this family post, the overlay MUST be funny and quite dramatic.
+Treat a small household thing like a crisis. Sitcom energy. Never soft, warm, or sentimental.
+
+Good:
+Mom treated leftovers like a federal crime.
+One missed call and the house went to war.
+Dinner was a hostage situation.
+Dad's silent treatment lasted three Thanksgivings.
+
+Bad:
+Home is where the heart is.
+Family dinners meant everything.
+The house went quiet after that.
+Life is about family.`
+    : `Pick ONE job for the line:
+- curiosity: tease the interesting part without giving the ending
+- funny: a dry, specific laugh tied to this post
+- emotional: a small hit in the chest, specific, not sappy
+
+Good:
+They used to share one phone.
+America almost lost this in an afternoon.
+Grandma timed the call. Five minutes.
+The house went quiet after that.
+
+Bad:
+A recap of family dinners then versus now.
+Nixon resigned in 1974 changing politics.
+You won't believe what happened next.
+Life is about family.`
+}
+
+Not a celebrity quote. Not a generic slogan. No author name. No hashtags. Spell it correctly.
 
 ${dna.imageStrategy}
 
@@ -2763,6 +3356,7 @@ ${options.imageStyle.trim()}`
       minWords: dna.minWords,
       maxWords: dna.maxWords,
       shortFunnyHook: /pet/i.test(topic),
+      useHashtags: dna.useHashtags,
     });
 
   if (!validation.valid) {
@@ -2782,15 +3376,15 @@ ${validation.reason}
 
 Rules:
 
-- Natural American English.
+- ${isVietnam ? "Natural spoken Vietnamese. Human, flirty, a subtle joke. Entire post in Vietnamese. Not English. Not a poem." : "Natural American English."}
 - Start with one catching sentence in ALL CAPS on its own first line, related to this post, that makes people want to read more.
 - The rest of the post is normal sentence case.
 - Keep hook → story/point → payoff. One relatable sentence is not enough.
 - Use short paragraphs with a blank line between them. Do not return one wall of text.
 - ${dna.hookRule}
 - ${dna.lengthGuide}
-- End with 2-4 specific hashtags on their own last line.
-- Do not use generic AI hashtags like #LifeChangingMoment, #Blessed, or #GoodVibesOnly.
+- ${isVietnam ? "Do not use hashtags." : "End with 2-4 specific hashtags on their own last line."}
+- ${isVietnam ? "Strip any # tags if they appear." : "Do not use generic AI hashtags like #LifeChangingMoment, #Blessed, or #GoodVibesOnly."}
 - Remove generic AI phrases.
 - Do not make it longer unless necessary.
 - Do not explain what you changed.
@@ -2854,10 +3448,11 @@ Rules:
             {
               allowEmojis:
                 dna.allowEmojis,
-              useHashtags:
-                dna.useHashtags,
+                useHashtags:
+                  dna.useHashtags,
             },
           );
+
       }
     }
   }
@@ -2915,11 +3510,15 @@ Rules:
 
     "Natural human behavior and believable surroundings.",
 
-    `The photograph must include this exact brief of the post in clear, readable English text on the image: "${quote.text}"`,
+    `The photograph must include this exact hook line in clear, readable ${isVietnam ? "Vietnamese" : "English"} text on the image: "${quote.text}"`,
+
+    isVietnam
+      ? "The overlay text must be Vietnamese: human, flirty, a subtle joke. Spoken, not poetic. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans."
+      : isFamily
+      ? "The overlay text must be funny and quite dramatic. Sitcom energy. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans, no sentimental line."
+      : "The overlay text must create curiosity, a laugh, or an emotional hit. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans.",
 
     "Do not add a celebrity name, author, or fake attribution.",
-
-    "The text is a short summary of the post, large and easy to read, correctly spelled, no extra slogans.",
 
     "No logos.",
     "No watermarks.",

@@ -1,23 +1,22 @@
 {
   "name": "FB 001",
-  "topic": "us-news",
+  "topic": "vietnam",
   "enabled": true,
-  "pageDna": "A US Facebook page about the hottest news and drama from the last few days, and real events in US history. Sounds like a regular person talking, not a news anchor or a textbook. Specific, sometimes funny, never a lecture.",
+  "pageDna": "A Vietnamese Facebook page that sounds like a real girl texting friends: human, flirty, a subtle joke under the line. Travel, cafe, rain, a leftover seat, a seen-and-ignored message. Spoken Vietnamese. Teasing, never poetic caption-speak, never a brochure.",
   "pillars": [
-    "hottest US news from the last few days",
-    "celebrity and pop-culture drama",
-    "viral moments people are arguing about",
-    "on this day in US history",
-    "famous American historical events",
-    "the strange or dramatic moments that built the country"
+    "thả thính: câu tán tỉnh nhẹ, đùa một chút, như đang nhắn cho một người",
+    "đi chơi / du lịch nhưng vẫn thả thính: Đà Lạt, Hội An, biển, ghế cửa sổ",
+    "đời sống: cà phê, tin nhắn để đó, mưa, quán quen, chuyện nhỏ mà để ý",
+    "joke nhỏ: phủ nhận đang thả thính rồi vẫn thả, giữ chỗ rồi bảo không giữ",
+    "nói chuyện với 'anh' như đang trêu, không viết quote sâu sắc"
   ],
   "emotions": [
-    "wait, this just happened",
-    "I cannot believe this is real",
-    "I forgot this happened",
-    "that's wild for American history",
-    "everyone is talking about this",
-    "curiosity"
+    "đang trêu một người",
+    "thả thính mà giả bộ vô tình",
+    "cười nhẹ vì chuyện nhỏ",
+    "nhớ mà không chịu nhận",
+    "đi chơi nhưng nghĩ tới ai đó",
+    "human and a little naughty"
   ],
-  "imageStyle": "Photorealistic scene matching the post. Current news: generic setting or crowd. History: period-accurate American scene or place. No recognizable celebrity, politician, or historical portrait. Short readable summary of the post on the image, no watermark, no logo, no split screen, no collage"
+  "imageStyle": "Photorealistic photo of a beautiful adult Vietnamese woman in her 20s, natural makeup, elegant, tasteful, not sexualized, not a real celebrity. She is the subject. Setting matches the post: cafe, travel, beach, rainy street, balcony, golden hour. Short readable Vietnamese hook that is flirty with a subtle joke. Do not recap the whole post. No watermark, no logo, no split screen, no collage"
 }
