@@ -8,10 +8,12 @@ export type AccountConfig = {
   enabled?: boolean;
   profileId?: string;
   imageStyle?: string;
+  avatar?: string;
   source?: "original" | "rewrite-real-stories";
   pageDna?: string;
   pillars?: string[];
   emotions?: string[];
+  intervalHours?: number;
 };
 
 const accountsDir = path.resolve("accounts");
@@ -40,6 +42,7 @@ export function loadAccounts(): AccountConfig[] {
       enabled: parsed.enabled !== false,
       profileId: parsed.profileId ? String(parsed.profileId) : undefined,
       imageStyle: parsed.imageStyle ? String(parsed.imageStyle).trim() : undefined,
+      avatar: parsed.avatar ? String(parsed.avatar).trim() : undefined,
       source: (parsed.source === "rewrite-real-stories"
         ? "rewrite-real-stories"
         : "original") as AccountConfig["source"],
@@ -50,6 +53,10 @@ export function loadAccounts(): AccountConfig[] {
       emotions: Array.isArray(parsed.emotions)
         ? parsed.emotions.map((item) => String(item).trim()).filter(Boolean)
         : undefined,
+      intervalHours:
+        Number(parsed.intervalHours) > 0
+          ? Number(parsed.intervalHours)
+          : 1,
     };
   });
 

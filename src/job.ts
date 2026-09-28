@@ -1,5 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { db, log } from "./db.js";
-import { generatePost } from "./content.js";
+import { generatePost, prepareImageForFacebook, stripAiMentions } from "./content.js";
 import { publishPost } from "./facebook.js";
 import {
   loadAccounts,
@@ -23,10 +25,75 @@ function recentPostsForAccount(accountName: string) {
   return rows.map((row) => row.content);
 }
 
+function hoursSinceLastPublish(accountName: string) {
+  const row = db
+    .prepare(
+      `
+      SELECT published_at
+      FROM posts
+      WHERE account = ?
+        AND status = 'published'
+        AND published_at IS NOT NULL
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    )
+    .get(accountName) as { published_at: string } | undefined;
+
+  if (!row?.published_at) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const then = Date.parse(row.published_at);
+
+  if (Number.isNaN(then)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return (Date.now() - then) / (60 * 60 * 1000);
+}
+
+function shouldSkipScheduledPost(account: AccountConfig) {
+  const intervalHours = account.intervalHours && account.intervalHours > 0
+    ? account.intervalHours
+    : 1;
+  const elapsed = hoursSinceLastPublish(account.name);
+
+  if (elapsed >= intervalHours) {
+    return false;
+  }
+
+  log(
+    "INFO",
+    `Skipping ${account.name}: last post ${elapsed.toFixed(1)}h ago (every ${intervalHours}h)`,
+  );
+  return true;
+}
+
+function resolveAccountAvatar(account: AccountConfig) {
+  const safe = account.name.replace(/[<>:"/\\|?*]/g, "_").trim();
+  const candidates = [
+    account.avatar,
+    path.resolve("data/avatars", `${safe}.jpg`),
+    path.resolve("data/avatars", `${safe}.jpeg`),
+    path.resolve("data/avatars", `${safe}.png`),
+    path.resolve("accounts", `${account.name}.jpg`),
+    path.resolve("accounts", `${account.name}.png`),
+  ].filter(Boolean) as string[];
+
+  return candidates.find((file) => fs.existsSync(file));
+}
+
 export async function runPublishFlow(account: AccountConfig) {
   const profileId = await resolveAccountProfileId(account);
 
   log("INFO", `Generating a ${account.topic} post for ${account.name}`);
+
+  const referenceImagePath = resolveAccountAvatar(account);
+
+  if (referenceImagePath) {
+    log("INFO", `${account.name} using face: ${referenceImagePath}`);
+  }
 
   const generated = await generatePost({
     forceImage: true,
@@ -38,12 +105,18 @@ export async function runPublishFlow(account: AccountConfig) {
     pageDna: account.pageDna,
     pillars: account.pillars,
     emotions: account.emotions,
+    referenceImagePath,
   });
 
   if (!generated.imagePath) {
     throw new Error(`Image generation failed for ${account.name}`);
   }
-  const content = generated.content;
+
+  const imagePath = await prepareImageForFacebook(generated.imagePath);
+  const content = stripAiMentions(generated.content);
+  const comment = generated.comment
+    ? stripAiMentions(generated.comment)
+    : generated.comment;
 
   const result = db
     .prepare(
@@ -60,7 +133,7 @@ export async function runPublishFlow(account: AccountConfig) {
     )
     .run(
       content,
-      generated.imagePath ?? null,
+      imagePath ?? null,
       account.name,
       new Date().toISOString(),
       "publishing",
@@ -69,7 +142,7 @@ export async function runPublishFlow(account: AccountConfig) {
   const postId = result.lastInsertRowid;
 
   try {
-    await publishPost(content, generated.imagePath, profileId, generated.comment);
+    await publishPost(content, imagePath, profileId, comment);
 
     db.prepare(
       `
@@ -109,9 +182,16 @@ export async function runAllAccounts() {
   }
 
   for (const [index, account] of accounts.entries()) {
+    let posted = false;
+
     try {
+      if (shouldSkipScheduledPost(account)) {
+        continue;
+      }
+
       log("INFO", `Starting ${account.name} (${account.topic})`);
       await runPublishFlow(account);
+      posted = true;
     } catch (error) {
       log(
         "ERROR",
@@ -121,7 +201,7 @@ export async function runAllAccounts() {
       );
     }
 
-    if (index < accounts.length - 1) {
+    if (posted && index < accounts.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 10_000));
     }
   }
