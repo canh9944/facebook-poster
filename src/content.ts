@@ -457,6 +457,27 @@ function firstParagraph(text: string) {
   return text.split(/\n\s*\n/)[0]?.trim() || text.trim();
 }
 
+function looksLikeScenicLazyOpener(hook: string) {
+  const line = hook.toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (
+    /^(ngồi|đứng|nằm)\s+(bên|cạnh|trên|ở)\b/.test(line) &&
+    /(hồ|biển|bể|pool|resort|rooftop|cafe|ban công|view|hồ bơi)/.test(line)
+  ) {
+    return true;
+  }
+
+  if (/mà thấy/.test(line) && /(lười|mệt|buồn|chán|ngán)/.test(line)) {
+    return true;
+  }
+
+  if (/\b(lười|mệt|chán|buồn)\s+ghê\b/.test(line) || /thấy lười/.test(line)) {
+    return true;
+  }
+
+  return false;
+}
+
 function looksLikeCaptionVoice(text: string) {
   const hook = firstParagraph(text);
   const letters = hook.replace(/[^a-zA-ZÀ-ỹ]/g, "");
@@ -499,6 +520,7 @@ function validateGeneratedPost(
     useHashtags?: boolean;
     casualVietnam?: boolean;
     previousEndings?: string[];
+    previousHay?: string;
   },
 ) {
   const body = removeHashtags(content);
@@ -545,11 +567,35 @@ function validateGeneratedPost(
       };
     }
 
+    if (looksLikeScenicLazyOpener(hook)) {
+      return {
+        valid: false,
+        reason:
+          "Do not open with ngồi bên hồ / đứng bên biển / mà thấy lười ghê. That stamp is banned. Start with a thought or a small hassle, not by announcing the scenery.",
+      };
+    }
+
     if (looksLikeCaptionVoice(body)) {
       return {
         valid: false,
         reason:
           "Too caption-like. No ALL CAPS first line. No 3-word telegram lines (ĐÓI. Tan làm. Về.). Write real spoken sentences.",
+      };
+    }
+
+    if (/\bluôn\b/i.test(body) || /ghê luôn/i.test(body)) {
+      return {
+        valid: false,
+        reason:
+          "Do not use luôn (especially ghê luôn). That stamp is banned. Find a new wording.",
+      };
+    }
+
+    if (/\bghê\b/i.test(body) && /\bghê\b/i.test(rules.previousHay || "")) {
+      return {
+        valid: false,
+        reason:
+          "Do not repeat ghê. Be more creative. New words this post.",
       };
     }
 
@@ -703,6 +749,16 @@ async function fetchHeadlines(url: string): Promise<string[]> {
   }
 }
 
+async function fetchFamilyMemeTrends() {
+  const query = encodeURIComponent(
+    "viral family tiktok OR relatable parents meme OR sibling tiktok OR facebook family funny OR that's my mom when:7d",
+  );
+
+  return fetchHeadlines(
+    `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`,
+  );
+}
+
 async function topicTrends(topic: string) {
   const query = encodeURIComponent(topic);
 
@@ -831,165 +887,130 @@ async function collectFootballNews() {
 
 const VIETNAM_SCENES = [
   {
-    id: "motorbike",
-    keywords: ["xe máy", "kẹt xe"],
-    beat: "kẹt xe trên xe máy",
+    id: "beach-resort",
+    keywords: ["biển", "resort", "hồ bơi"],
+    beat: "ở resort gần biển",
     photo:
-      "the same woman on a motorbike in Saigon traffic at dusk, helmet, ordinary street clothes, candid phone photo",
+      "the same beautiful woman at a Vietnamese beach resort, turquoise water, white sand, sundress or stylish modest resort wear, pretty and attractive, not bikini, golden hour",
   },
   {
-    id: "kitchen",
-    keywords: ["bếp", "nấu"],
-    beat: "đang nấu ăn ở nhà",
+    id: "pool",
+    keywords: ["hồ bơi", "villa"],
+    beat: "bên hồ bơi villa",
     photo:
-      "the same woman in a small Vietnamese kitchen at night, cooking, messy counter, casual home clothes, candid",
+      "the same beautiful woman by an infinity pool overlooking the sea, stylish summer dress or modest cover-up, pretty and attractive, fully clothed, not a swimsuit shoot, late afternoon sun",
   },
   {
-    id: "market",
-    keywords: ["chợ", "trái cây"],
-    beat: "đi chợ buổi sáng",
+    id: "dalat",
+    keywords: ["Đà Lạt", "thông", "sương"],
+    beat: "Đà Lạt, sương, đồi thông",
     photo:
-      "the same woman at a Vietnamese wet market in the morning, fruit stall, daylight, casual clothes, candid",
+      "the same beautiful woman in a Đà Lạt pine forest cafe terrace, mist, warm coat, soft morning light, pretty",
   },
   {
-    id: "street-food",
-    keywords: ["vỉa hè", "phở", "bún"],
-    beat: "ngồi vỉa hè ăn đêm",
+    id: "flowers",
+    keywords: ["hoa", "vườn"],
+    beat: "vườn hoa",
     photo:
-      "the same woman at a night street-food stall on a plastic stool, steam, neon, casual clothes",
+      "the same beautiful woman in a Vietnamese flower greenhouse or hydrangea garden, sundress, daylight, magazine look",
   },
   {
-    id: "convenience",
-    keywords: ["tiện lợi", "circle k"],
-    beat: "đứng trong cửa hàng tiện lợi",
+    id: "hoian",
+    keywords: ["Hội An", "đèn lồng"],
+    beat: "phố đèn lồng Hội An",
     photo:
-      "the same woman in a convenience store at night, fridge lights, holding a drink, casual clothes",
+      "the same beautiful woman on a Hội An lantern street at dusk, elegant casual dress, warm lantern glow, photogenic",
   },
   {
-    id: "bedroom",
-    keywords: ["phòng", "gối", "gương"],
-    beat: "ở nhà trên giường hoặc soi gương",
+    id: "rooftop-bar",
+    keywords: ["rooftop", "skyline"],
+    beat: "rooftop nhìn thành phố",
     photo:
-      "the same woman in a bedroom with a phone, messy bed, indoor lamp, oversized shirt, candid, tasteful",
+      "the same beautiful woman on a rooftop bar with Saigon skyline at night, pretty modest dress, city lights, attractive candid, not sexy",
   },
   {
-    id: "car",
-    keywords: ["ô tô", "cửa sổ xe", "taxi"],
-    beat: "ngồi trên xe nhìn ra cửa sổ",
+    id: "hotel",
+    keywords: ["khách sạn", "cửa sổ"],
+    beat: "phòng khách sạn cửa sổ lớn",
     photo:
-      "the same woman in a car back seat at night looking out the window, city lights, casual clothes",
+      "the same beautiful woman in a boutique hotel room with floor-to-ceiling windows and city view, pretty casual dress, fully clothed, attractive, not a robe, not bedroom-sexy, soft light",
   },
   {
-    id: "park",
-    keywords: ["công viên", "ghế đá"],
-    beat: "ngồi công viên chiều",
+    id: "cafe-glass",
+    keywords: ["cafe", "trà"],
+    beat: "cafe đẹp, kính, cây",
     photo:
-      "the same woman on a park bench in late afternoon, trees, ordinary clothes, candid",
+      "the same beautiful woman in a high-end glass cafe full of plants, iced drink, stylish outfit, natural window light, not a cheap plastic stool stall",
   },
   {
-    id: "beach",
-    keywords: ["biển", "cát", "muối"],
-    beat: "ở biển, gió, cát",
+    id: "lake",
+    keywords: ["hồ", "thuyền"],
+    beat: "bên hồ chiều",
     photo:
-      "the same woman on a rocky Vietnamese beach in daylight, wind in her hair, tasteful beachwear, candid",
+      "the same beautiful woman by a calm lake at sunset, light dress, wind in her hair, cinematic Vietnam landscape",
   },
   {
-    id: "airport",
-    keywords: ["máy bay", "sân bay"],
-    beat: "sân bay hoặc ghế cửa sổ máy bay",
+    id: "cliff",
+    keywords: ["mũi", "vách đá"],
+    beat: "mũi đá nhìn biển",
     photo:
-      "the same woman at an airplane window seat with headphones, hoodie or casual travel clothes",
+      "the same beautiful woman on a coastal cliff at golden hour, ocean behind her, elegant casual clothes, fashion- candid",
   },
   {
-    id: "rain",
-    keywords: ["mưa", "ô"],
-    beat: "trời mưa, đang trú",
+    id: "gallery",
+    keywords: ["gallery", "bảo tàng"],
+    beat: "trong gallery",
     photo:
-      "the same woman on a rainy Vietnamese sidewalk under an awning, wet hair, umbrella, night reflections",
+      "the same beautiful woman in a bright art gallery, modern dress, clean architecture, editorial lighting",
   },
   {
-    id: "balcony",
-    keywords: ["ban công", "phơi"],
-    beat: "ban công nhà lúc tối",
+    id: "boutique",
+    keywords: ["boutique", "shop"],
+    beat: "trong boutique",
     photo:
-      "the same woman on an apartment balcony at night, laundry, city below, casual home clothes",
+      "the same beautiful woman in a chic clothing boutique with mirrors and warm lights, stylish outfit, tasteful",
   },
   {
-    id: "office",
-    keywords: ["tan làm", "công ty"],
-    beat: "tan làm",
+    id: "car-night",
+    keywords: ["xe", "đèn thành phố"],
+    beat: "ngồi xe nhìn đèn thành phố",
     photo:
-      "the same woman leaving an office elevator after work, tired, phone, work-casual clothes",
+      "the same beautiful woman in a nice car at night, city bokeh through the window, pretty outfit, cinematic",
   },
   {
-    id: "bookstore",
-    keywords: ["sách", "nhà sách"],
-    beat: "đứng trong nhà sách",
+    id: "plane",
+    keywords: ["máy bay", "cửa sổ"],
+    beat: "ghế cửa sổ máy bay",
     photo:
-      "the same woman in a bookstore aisle holding a book, indoor light, casual clothes",
+      "the same beautiful woman at an airplane window seat, headphones, chic travel outfit, clouds outside, pretty lighting",
   },
   {
-    id: "bridge",
-    keywords: ["cầu", "hoàng hôn"],
-    beat: "đi trên cầu lúc chiều",
+    id: "balcony-view",
+    keywords: ["ban công", "view"],
+    beat: "ban công view đẹp",
     photo:
-      "the same woman walking a city bridge at sunset, river wind, casual clothes, candid snapshot",
+      "the same beautiful woman on a high-rise balcony with a sweeping city or sea view, pretty casual evening outfit, fully clothed, attractive, no laundry, cinematic",
   },
   {
-    id: "grocery",
-    keywords: ["siêu thị"],
-    beat: "đi siêu thị một mình",
+    id: "night-pretty",
+    keywords: ["phố đêm", "neon"],
+    beat: "phố đêm đẹp",
     photo:
-      "the same woman in a supermarket aisle with a small basket, overhead lights, casual clothes",
+      "the same beautiful woman walking a photogenic night street with neon reflections, stylish outfit, not a wet market, not parked motorbikes as the subject",
   },
   {
-    id: "rooftop",
-    keywords: ["sân thượng"],
-    beat: "sân thượng nhà",
+    id: "spa",
+    keywords: ["spa", "resort"],
+    beat: "spa resort",
     photo:
-      "the same woman on an old apartment rooftop with a clothesline, late light, casual clothes",
+      "the same beautiful woman in a resort spa lounge with stone, plants, and soft light, pretty casual resort outfit, fully clothed, no robe, attractive, modest",
   },
   {
-    id: "night-street",
-    keywords: ["phố đêm", "đèn vàng"],
-    beat: "đi bộ phố đêm",
+    id: "sunrise-beach",
+    keywords: ["bình minh", "cát"],
+    beat: "bình minh trên biển",
     photo:
-      "the same woman walking a yellow-lit Vietnamese alley at night, motorbikes parked, casual clothes",
-  },
-  {
-    id: "nails",
-    keywords: ["nails", "làm móng"],
-    beat: "đang làm nails",
-    photo:
-      "a Vietnamese nail salon, her hands on the table, phone nearby, casual clothes, candid",
-  },
-  {
-    id: "laundry",
-    keywords: ["phơi đồ", "máy giặt"],
-    beat: "phơi đồ ở nhà",
-    photo:
-      "the same woman hanging laundry on a balcony clothesline, afternoon light, home clothes",
-  },
-  {
-    id: "bus",
-    keywords: ["xe buýt", "ghế xe"],
-    beat: "ngồi xe buýt hoặc xe ôm công nghệ",
-    photo:
-      "the same woman on a city bus or in a Grab, looking out, backpack, ordinary clothes",
-  },
-  {
-    id: "desk",
-    keywords: ["bàn làm", "laptop"],
-    beat: "ngồi bàn làm việc ở nhà",
-    photo:
-      "the same woman at a small home desk with a laptop, messy notes, indoor lamp, oversized shirt",
-  },
-  {
-    id: "fridge",
-    keywords: ["tủ lạnh", "đói đêm"],
-    beat: "mở tủ lạnh lúc đêm",
-    photo:
-      "the same woman opening a fridge at night in a small kitchen, fridge light, home clothes",
+      "the same beautiful woman walking a quiet beach at sunrise, sundress, attractive, fully clothed, not bikini, not wet, film-like light",
   },
 ];
 
@@ -1071,7 +1092,6 @@ const VIETNAM_CLOSERS = [
   "Lần sau.",
   "Hôm nay vậy.",
   "Không lấy.",
-  "Mua luôn.",
   "Chưa.",
   "Ừ.",
   "Được rồi.",
@@ -1124,16 +1144,16 @@ const VIETNAM_SEEDS = [
 ];
 
 const VIETNAM_LIFE_SEEDS = [
-  "Tan làm. Túi nặng. Thang máy chậm. Em muốn về để nằm.",
-  "Mở tủ lạnh lúc đêm. Không có gì. Vẫn mở lần nữa.",
-  "Trời mưa. Xe ướt. Tóc ướt. Em vẫn ra đường vì hết mì tôm.",
-  "Siêu thị. Đứng mười phút trước kệ sữa chua. Không biết lấy vị nào.",
-  "Nằm. Biết phải dậy. Vẫn nằm.",
-  "Đèn đỏ. Nhạc hết. Không muốn mở bài khác.",
-  "Nấu canh. Muối. Nếm. Muối nữa. Xong mặn.",
-  "Sân bay. Delay. Pin 12%. Em không hoảng. Em chỉ im.",
-  "Phơi đồ. Gió. Một chiếc tất bay. Thôi.",
-  "Đói. Không muốn nấu. Không muốn ra ngoài. Vẫn đói.",
+  "Chụp 20 tấm. Xóa 19. Tấm đẹp nhất cũng xóa vì mặt hơi dừ.",
+  "Gọi size lớn. Uống 2 ngụm. Đầy. Em vẫn khoe ly.",
+  "Nắng. Ra cho có hình. Về là hết pin người.",
+  "Kem chống nắng quên một bên. Giờ mặt hai tone. Kệ.",
+  "Menu chọn 10 phút. Gọi ly cũ. Đúng nhận sai cãi với chính mình.",
+  "Delay. Pin 12%. Em vẫn giả vờ chill.",
+  "Áo mỏng. Biết lạnh. Vẫn ra. Về run. Đăng hình thì nói trời đẹp.",
+  "Đói. Chọn lâu vì không muốn sai. Sai vẫn được.",
+  "Chưa makeup. Vẫn ra đứng. Camera xa một chút là xong.",
+  "Ly hết từ lâu. Em chưa đứng dậy. Giữ chỗ cho không khí.",
 ];
 
 const VIETNAM_FLIRT_LINES = [
@@ -1155,31 +1175,34 @@ const VIETNAM_FLIRT_LINES = [
 ];
 
 async function collectVietnamInspiration() {
-  const [travelNews, flirtNews, viralNews] = await Promise.allSettled([
+  const [tiktok, viral, youth, daily] = await Promise.allSettled([
     fetchHeadlines(
       `https://news.google.com/rss/search?q=${encodeURIComponent(
-        "du lịch Việt Nam when:14d",
+        "tiktok việt nam OR trend tiktok when:7d",
       )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
     ),
     fetchHeadlines(
       `https://news.google.com/rss/search?q=${encodeURIComponent(
-        "thả thính OR \"câu thả thính\" OR \"status thả thính\" when:14d",
+        "viral việt nam OR meme việt nam OR câu nói hot when:7d",
       )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
     ),
     fetchHeadlines(
       `https://news.google.com/rss/search?q=${encodeURIComponent(
-        "câu thả thính hài OR thả thính viral OR thả thính trending",
+        "gen z việt nam OR slang OR 'hết cứu' OR 'đúng nhận sai cãi' when:7d",
+      )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
+    ),
+    fetchHeadlines(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(
+        "nắng nóng OR mưa OR trà sữa OR bánh trung thu OR trend ăn uống việt nam when:7d",
       )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
     ),
   ]);
 
   const headlines: string[] = [
-    ...shuffle(VIETNAM_LIFE_SEEDS).slice(0, 6),
-    ...shuffle(VIETNAM_FLIRT_LINES).slice(0, 4),
-    ...shuffle(VIETNAM_SEEDS).slice(0, 3),
+    ...shuffle(VIETNAM_LIFE_SEEDS).slice(0, 4),
   ];
 
-  for (const result of [travelNews, flirtNews, viralNews]) {
+  for (const result of [tiktok, viral, youth, daily]) {
     if (result.status === "fulfilled") {
       headlines.push(...result.value);
     }
@@ -1292,25 +1315,25 @@ async function collectUSHistoryEvents() {
 const PAGE_DNA: Record<string, PageDna> = {
   vietnam: {
     identity:
-      "A Vietnamese Facebook page of a young girl posting like chat with friends: short, casual, Gen-Z spoken Vietnamese. Life first. Flirting only if it is light and subtle, never a thirsty pickup-line page.",
+      "A Vietnamese Facebook page of a young girl: short Gen-Z Vietnamese, human, funny, a little playful. Joke at herself or a small hassle. Catch a trend. Never stamp luôn. Life first. Flirting only if light.",
 
     pillars: [
-      "đời thường: kẹt xe, nấu ăn, tan làm, mưa, siêu thị, nằm nhà",
+      "chuyện nhỏ hài, tự giễu, hơi giỡn",
+      "đi chỗ đẹp mà vẫn dở: quên kem, chụp xóa, giả vờ chill",
       "thả thính nhẹ, tinh tế, không lộ, không câu thính mạng",
-      "đi đâu đó: xe, sân bay, biển, phố, ban công",
-      "đói, đồ ăn vỉa hè, tủ lạnh đêm, trà sữa",
-      "mood: lười, chưa makeup, không muốn ra ngoài",
-      "nói chuyện giới trẻ: trời, luôn, ghê, lười, thiệt, hen — ngắn, không sến",
+      "đói, trà sữa, chọn menu lâu, cafe đẹp",
+      "mood lười nhưng giỡn, không caption buồn",
+      "nói chuyện giới trẻ, bắt trend — không sến, không luôn",
     ],
 
     emotions: [
-      "đang sống bình thường",
-      "hơi lười",
-      "cười vì chuyện nhỏ",
-      "đang trêu một người",
-      "đói hoặc mệt",
-      "đi chơi một mình",
-      "human and a little messy",
+      "đang giỡn",
+      "cười vì chuyện dở",
+      "hơi lười mà vẫn đi",
+      "trêu nhẹ",
+      "đói hài",
+      "đi chơi một mình cho vui",
+      "human, funny, playful",
     ],
 
     inspirationSources: ["vietnam_life", "pinterest"],
@@ -1331,7 +1354,7 @@ const PAGE_DNA: Record<string, PageDna> = {
     ],
 
     imageStrategy:
-      "Photorealistic candid phone photo of the SAME woman as the attached reference (hair color, hair length, skin, age). New everyday scene. New camera angle every post: profile, over-shoulder, from behind, looking down, mid-shot, not a frontal headshot. Do not copy the reference pose or face crop. Clothes match the scene. Tasteful. NO text on the image. No logos, watermarks, collage, or split screen.",
+      "Photorealistic pretty photo of the SAME woman as the attached reference (hair, skin, age). Beautiful-girl feed: beach, resort, rooftop, flowers, hotel, lantern street, lake, pool, boutique cafe. Attractive and flattering, a little pretty, NOT sexy: fully clothed, no bikini, no lingerie, no wet look, no cleavage close-up, no sexual pose. Sundress or stylish modest outfit. Soft smile or playful glance. NEVER a wet market, supermarket, convenience store, plastic-stool street stall, laundry line, bus, or messy kitchen. New camera angle every post. NO text on the image. No logos, watermarks, collage, or split screen.",
 
     allowEmojis: false,
     useHashtags: false,
@@ -1340,7 +1363,7 @@ const PAGE_DNA: Record<string, PageDna> = {
     lengthGuide:
       "Usually 15-32 Vietnamese words. Short. Youth chat. Two tiny paragraphs is enough. If it is longer than a Zalo message, cut it.",
     hookRule:
-      "Open with one short spoken line, normal case, like texting a friend. Then one more beat. Stop. Do not write a paragraph of setup.",
+      "Open with one short spoken line, normal case, like texting a friend. Funny or playful if you can. Do NOT start by announcing the scenery (ngồi bên hồ, đứng trên rooftop, view đẹp mà thấy lười ghê). Jump into a thought, a small hassle, or a self-tease. Then one more beat. Stop.",
   },
 
   football: {
@@ -1555,7 +1578,7 @@ const PAGE_DNA: Record<string, PageDna> = {
     ],
 
     imageStrategy:
-      "One photorealistic American family photo matching THIS post: an old-days home scene, a nowadays home scene, or a mid-chaos family moment. Natural light, slightly imperfect framing. Overlay a short readable hook in large text that is funny and quite dramatic. Do not recap the whole post. Do not use a soft or sentimental line. No split screen, no collage, no logos, no watermarks.",
+      "One photorealistic American home photo matching THIS post. Maximum TWO people, preferably one person or just hands/objects in an empty room. No group portrait, no crowded dinner table, no five-person family shot — that looks fake. Natural light, slightly imperfect phone framing. Overlay a SHORT viral-funny line in huge readable text: trending meme energy, laugh in one second, makes people comment or tag. Do not recap the post. Do not use a soft or sentimental line. No split screen, no collage, no logos, no watermarks.",
 
     allowEmojis: false,
     useHashtags: true,
@@ -1666,38 +1689,46 @@ I can see you. The curtain is see-through.
 const VIETNAM_VOICE_RULES = `
 VIETNAMESE PAGE VOICE (required)
 
-Write like a young Vietnamese girl posting on Facebook / Zalo. Gen-Z chat. Short. Entirely Vietnamese.
+Write like a young Vietnamese girl posting on Facebook / Zalo. Gen-Z chat. Short. Entirely Vietnamese. Human. Funny. A little playful.
 
-Sound like talking to friends: trời, luôn, ghê, quá, thiệt, hen, kìa, mình. Casual. Not office-speak. Not a mom. Not a poet. Not a caption bot.
+Sound like talking to friends: trời, thiệt, hen, kìa, xỉu, úi, mình. Casual. Vary the words. Never stamp luôn or ghê luôn on every line.
 
 Do this:
 - SHORT. About 2 short paragraphs. 15-32 words total. Cut extra sentences.
 - Normal capitalization. No ALL CAPS first line.
-- Spoken: "lười quá trời", "đói ghê", "kẹt xe luôn", "pin còn có 12%".
-- If this is a life/mood/food/travel post: no flirting at all.
-- If this is a flirting post: very light. Imply, do not declare. No pickup lines. Do not talk to 'anh'. Do not say thả thính.
+- Funny because a small thing went a bit wrong, or she is teasing herself. Playful, not dry, not a sad lazy caption.
+- Creative youth chat. New wording every post. Catch a current trend/meme/slang/food/weather if the inspiration list has one — twist it into THIS scene with a tiny joke.
+- Spoken variety: "lười quá trời", "đói muốn xỉu", "chụp xong xóa", "giả vờ chill". NOT "X ghê luôn".
+- If this is a life/mood/food/travel post: no flirting at all. Still funny.
+- If this is a flirting post: very light and playful. Imply, do not declare. No pickup lines. Do not talk to 'anh'. Do not say thả thính.
 
 Never use:
 ngọt ngào, dịu dàng, lung linh, lấp lánh, lãng đãng, bình yên, ký ức, ánh mắt, trái tim, tâm hồn, xao xuyến, thổn thức, mỏi lòng, rung động, gió nhẹ, lá rụng, sáng rực, thật tình mà nói, biết đâu, chỉ cần anh, như một, tựa như, gây ấn tượng, mong chờ.
 No English slang dump (slay, vibe, era) unless one word slips in naturally.
 No lộ thính: ăn cơm chưa, wifi nhà em, anh seen, anh mang em về, lần thứ bảy, thả thính, bắt sóng.
+Banned filler: luôn, ghê luôn, cô đơn ghê, chán ghê, lười ghê luôn.
 
 Never:
 - Long posts
 - ALL CAPS first line
 - Caption style: ĐÓI. / Tan làm. / Về ăn mì.
+- Opening stamp: "ngồi bên hồ mà thấy lười ghê", "đứng bên biển mà thấy mệt ghê", or any ngồi/đứng/nằm bên + place + mà thấy + mood
 - Everyone-question ("có ai giống mình không")
 - Essay, moral, travel blog
 - Lone "Thôi." as the last line
+- The word luôn (no ghê luôn, no cái gì cũng luôn)
+- Dry "em lười" with no joke
+- Trying too hard to be a comedian
 
 Good:
-Tan làm muộn quá trời.
-Đói mà lười nấu. Về ăn mì vậy.
+Chụp 20 tấm. Xóa 19.
+Tấm đẹp nhất cũng xóa vì mặt hơi dừ.
 
-Kẹt xe ghê luôn. Mũ nóng, pin 12%.
-Không phải đợi tin nhắn. Đèn đỏ lâu quá nghĩ linh tinh.
+Gọi size lớn. Uống 2 ngụm. Đầy.
+Em vẫn khoe ly.
 
-Tủ lạnh 12 giờ đêm. Biết không có gì vẫn mở. Lười nấu quá.
+Nắng. Ra cho có hình.
+Về là hết pin người.
 
 Good flirt (flirting track only, nhẹ):
 Ghế bên cạnh trống.
@@ -1716,6 +1747,10 @@ Về ăn mì.
 
 Bad (poetic):
 Chiều mát, gió nhẹ thổi qua. Trái tim em cũng mệt mỏi.
+
+Bad (scenery + lazy stamp — never open like this):
+Ngồi bên hồ mà thấy lười ghê.
+Đứng trên rooftop mà thấy mệt ghê.
 `;
 
 function vietnamTrackRules(
@@ -1724,16 +1759,16 @@ function vietnamTrackRules(
   closer: string,
 ) {
   const trackGuide: Record<VietnamTrack, string> = {
-    flirting: `THIS POST: soft flirting only
-A hint, not a pickup. Imply someone is on her mind without naming anh, without "thả thính", without viral lines (ăn cơm chưa, wifi, seen). One quiet detail from THIS scene: empty seat, typed-then-deleted message, rain, leftover space. If a stranger could screenshot it as a thirsty caption, rewrite softer. Do not move her to a cafe.`,
-    life: `THIS POST: a normal life moment
-Something small that happened: tired, kẹt xe, tan làm, mưa, nấu dở, siêu thị. A human beat. A tiny joke if it fits. Do NOT thả thính. Do not talk to 'anh'. She is just living.`,
-    travel: `THIS POST: going somewhere
-On the way, waiting, a place, weather, a small inconvenience or a pretty detail. Not a tourism caption. Not flirting. Not "cuộc đời là những chuyến đi".`,
-    mood: `THIS POST: lazy / mood at home
-Gối, chưa makeup, không muốn ra ngoài, nằm, playlist, hơi lười. Relatable girl life. Not thirsty. Not a sad poem.`,
-    food: `THIS POST: hungry / eating
-Street food, leftover, tủ lạnh đêm, nấu dở, no topping. Funny because it is true. Not a restaurant review. Not thả thính.`,
+    flirting: `THIS POST: soft playful flirting only
+A hint, not a pickup. Imply someone is on her mind without naming anh, without "thả thính", without viral lines (ăn cơm chưa, wifi, seen). One quiet playful detail from THIS scene: empty seat, typed-then-deleted message, rain, leftover space. If a stranger could screenshot it as a thirsty caption, rewrite softer. Do not move her to a cafe.`,
+    life: `THIS POST: a normal life moment in a pretty place, funny and playful
+A small hassle or self-tease (chụp xóa, quên kem, giả vờ chill, chọn lâu). Human. Not dry. Do NOT thả thính. Do not talk to 'anh'. Do not put her in a wet market or supermarket.`,
+    travel: `THIS POST: going somewhere pretty, with a tiny joke
+On the way, waiting, weather, a small inconvenience she laughs at. Not a tourism caption. Not flirting. Not "cuộc đời là những chuyến đi".`,
+    mood: `THIS POST: lazy / mood, but playful
+Lười, chưa makeup, không muốn ra ngoài — joke at herself. Photo is still a pretty room, hotel, or balcony view. Not thirsty. Not a sad poem. Not dry "em lười".`,
+    food: `THIS POST: hungry / eating, funny
+Pretty cafe, rooftop drink, hotel breakfast, trà sữa. Funny because she is extra (size lớn, chọn 10 phút, 2 ngụm). Not a wet market. Not a plastic-stool stall. Not thả thính.`,
   };
 
   const endingRule =
@@ -1746,7 +1781,7 @@ THIS POST SCENE: ${scene.beat}
 Photo setting: ${scene.photo}
 ${endingRule}
 Last line must be different from previous posts. Never use a lone "Thôi." as the ending.
-Write FROM this exact place. Do not move her to a cafe.`;
+She is at this place, but do not announce it in sentence 1. No "ngồi bên hồ mà thấy lười ghê". Start with a thought or hassle. Do not move her to a cafe.`;
 }
 
 const FOOTBALL_VOICE_RULES = `
@@ -2058,24 +2093,24 @@ const PINTEREST_SEEDS: Record<string, string[]> = {
   ],
 
   family: [
-    "kids at a kitchen table with mismatched plates",
-    "dad asleep on the couch with a child using him as a pillow",
-    "handwritten grocery list on a refrigerator",
-    "backyard hose on a summer afternoon",
-    "grandparents' living room at dusk with the television on",
-    "shoes piled near the front door",
-    "family group chat lighting up a phone on the kitchen counter",
-    "kids FaceTiming a grandparent at the table",
-    "car GPS rerouting while a parent argues with it",
+    "one kid at a kitchen table with a mismatched plate",
+    "dad asleep on the couch, TV glow, empty living room",
+    "handwritten grocery list on a refrigerator, nobody in frame",
+    "backyard hose on a summer afternoon, one child at the edge",
+    "empty grandparents' living room at dusk with the television on",
+    "shoes piled near the front door, no people",
+    "a phone on the kitchen counter lighting up with a group chat",
+    "one kid FaceTiming, only the back of a head and the phone",
+    "car dashboard GPS screen, one parent hand on the wheel",
   ],
 
   vietnam: [
-    "beautiful adult Vietnamese woman at a Đà Lạt pine cafe in morning mist",
-    "beautiful adult Vietnamese woman in Hội An lantern street at dusk",
-    "beautiful adult Vietnamese woman on a Phú Quốc beach at golden hour",
-    "beautiful adult Vietnamese woman at a Hà Nội cafe window in the rain",
-    "beautiful adult Vietnamese woman on a Sài Gòn balcony at night",
-    "beautiful adult Vietnamese woman looking out an airplane window",
+    "beautiful adult Vietnamese woman at a Đà Lạt pine cafe in morning mist, fully clothed, pretty not sexy",
+    "beautiful adult Vietnamese woman in Hội An lantern street at dusk, modest dress",
+    "beautiful adult Vietnamese woman on a Phú Quốc beach at golden hour, sundress, not bikini",
+    "beautiful adult Vietnamese woman at a Hà Nội cafe window in the rain, stylish modest outfit",
+    "beautiful adult Vietnamese woman on a high-rise Sài Gòn balcony with skyline view at night, no laundry, fully clothed",
+    "beautiful adult Vietnamese woman looking out an airplane window, chic travel clothes",
   ],
 
   football: [
@@ -2599,6 +2634,29 @@ async function fetchInternetQuotes(terms: string[]) {
   );
 }
 
+function looksLikeWeakFamilyOverlay(text: string) {
+  const line = text.toLowerCase();
+
+  if (
+    /home is where|family is everything|blessed|grateful|meant everything|love of family|heart is|life is about family/.test(
+      line,
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /like a federal crime|hostage situation|went to war|silent treatment lasted/.test(
+      line,
+    )
+  ) {
+    return true;
+  }
+
+  const words = wordCount(text);
+  return words < 3 || words > 12 || text.length > 80;
+}
+
 function briefFromPost(content: string) {
   const body = removeHashtags(content).replace(/\s+/g, " ").trim();
   const hook = firstSentence(body)
@@ -2623,6 +2681,39 @@ function pickQuoteForPost(
     .replace(/^["']+|["']+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
+  const isFamily = /family/i.test(topic);
+
+  if (isFamily) {
+    if (cleanedOriginal && !looksLikeWeakFamilyOverlay(cleanedOriginal)) {
+      return {
+        text: cleanedOriginal,
+        author: "",
+      };
+    }
+
+    const hook = firstSentence(removeHashtags(content))
+      .replace(/^["']+|["']+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (hook && !looksLikeWeakFamilyOverlay(hook)) {
+      return {
+        text: hook,
+        author: "",
+      };
+    }
+
+    const fallback = (cleanedOriginal || hook)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 8)
+      .join(" ");
+
+    return {
+      text: fallback || "This family could never",
+      author: "",
+    };
+  }
 
   if (
     cleanedOriginal &&
@@ -3039,7 +3130,7 @@ const CONTENT_SCHEMA = {
     imageQuote: {
       type: "string",
       description:
-        "A 6 to 14 word hook for the photo. Related to this exact post. Do not spoil the whole story. No celebrity quote. No author name. No hashtags. For Vietnamese posts, leave this empty: the photo has no overlay. For family posts, it MUST be funny and quite dramatic, never sentimental. For other topics, spark curiosity, a laugh, or an emotional hit.",
+        "A 6 to 14 word hook for the photo. Related to this exact post. Do not spoil the whole story. No celebrity quote. No author name. No hashtags. For Vietnamese posts, leave this empty: the photo has no overlay. For family posts: 4-10 words, viral-funny, trending meme energy, instant laugh or reaction. Never sentimental. For other topics, spark curiosity, a laugh, or an emotional hit.",
     },
 
     needsImage: {
@@ -3445,7 +3536,7 @@ export async function generatePost(options?: {
     : pick(familyTrack ? familyInspiration : dna.inspirationSources);
   const useTrend = isVietnam
     ? true
-    : isFootball || fb001Track === "news"
+    : isFootball || fb001Track === "news" || isFamily
       ? true
       : Math.random() < 0.3;
 
@@ -3478,14 +3569,16 @@ export async function generatePost(options?: {
       ? isVietnam
         ? fetchHeadlines(
             `https://news.google.com/rss/search?q=${encodeURIComponent(
-              "thả thính hài OR \"câu thả thính\" OR status thả thính viral",
+              "trend tiktok việt OR viral facebook việt OR meme gen z OR câu hot when:7d",
             )}&hl=vi-VN&gl=VN&ceid=VN:vi`,
           )
-        : topicTrends(
-            isFootball
-              ? "Cristiano Ronaldo Lionel Messi football news"
-              : topic,
-          )
+        : isFamily
+          ? fetchFamilyMemeTrends()
+          : topicTrends(
+              isFootball
+                ? "Cristiano Ronaldo Lionel Messi football news"
+                : topic,
+            )
       : Promise.resolve([] as string[]),
   ]);
 
@@ -3516,7 +3609,7 @@ export async function generatePost(options?: {
   const systemPrompt = `
 ${
   isVietnam
-    ? `You write short Facebook posts as a young Vietnamese girl chatting with friends. Gen-Z spoken Vietnamese. Short. Not a poet, not a caption bot.`
+    ? `You write short Facebook posts as a young Vietnamese girl chatting with friends. Human. Funny. A little playful. Gen-Z spoken Vietnamese. Short. Not a poet, not a caption bot, not dry.`
     : `You are an elite Facebook content strategist and writer creating organic content for a US audience.`
 }
 
@@ -3542,7 +3635,7 @@ ${
 }
 CONTENT PRINCIPLES
 
-1. ${isVietnam ? "Write short Gen-Z Vietnamese, like chatting with friends. Trời, luôn, ghê, lười. 15-32 words. Not ALL CAPS. Not a caption. Not a poem. Flirting track: light and subtle only, never lộ." : "Write natural American English."}
+1. ${isVietnam ? "Write short Gen-Z Vietnamese. Human, funny, playful. Catch a current trend if one is in the list. 15-32 words. Never luôn / ghê luôn. Not ALL CAPS. Flirting track: light and playful only." : "Write natural American English."}
 2. Sound human, not like an AI copywriter.
 3. Prefer concrete details over generic emotional language.
 4. Start close to the interesting part.
@@ -3586,8 +3679,8 @@ ${
   isVietnam
     ? `Talk like a young girl on Facebook:
 one short chat line
-→ one more beat
-→ stop. 15-32 words. Never a lone "Thôi."`
+→ one more beat with a tiny joke or self-tease
+→ stop. Human, funny, playful. 15-32 words. Never a lone "Thôi."`
     : `Every post MUST have this shape:
 
 HOOK (one catching sentence, its own first paragraph)
@@ -3601,8 +3694,8 @@ Good first lines:
 ${
   isVietnam
     ? `Tan làm muộn quá trời.
-Kẹt xe ghê luôn.
-Tủ lạnh 12 giờ đêm.`
+Chụp xong xóa.
+Gọi size lớn.`
     : `THEY USED TO SHARE ONE PHONE. Nobody shares a table now.
 AMERICA ALMOST LOST THIS IN A SINGLE AFTERNOON.
 THE HOUSE PHONE USED TO BE AN EVENT.`
@@ -3613,6 +3706,8 @@ You won't believe what happened next.
 Let me tell you about family dinners.
 Here's the thing about US history.
 Bạn sẽ không tin điều gì xảy ra tiếp theo.
+Ngồi bên hồ mà thấy lười ghê.
+Đứng trên rooftop mà thấy mệt ghê.
 
 ${
   isVietnam
@@ -3643,9 +3738,9 @@ The content string must look like this:
 
 ${
   isVietnam
-    ? `Tan làm muộn quá trời.
+    ? `Chụp 20 tấm. Xóa 19.
 
-Đói mà lười nấu. Về ăn mì vậy.`
+Tấm đẹp nhất cũng xóa vì mặt hơi dừ.`
     : `THEY USED TO FIGHT OVER ONE PHONE IN THE HALLWAY.
 
 Grandma would stand there timing you. You got five minutes. If someone called the house, the whole family knew.
@@ -3849,7 +3944,7 @@ INSPIRATION SOURCE
 
 ${
   isVietnam
-    ? "a real Vietnamese girl's day: life moments, food, mood, travel, and sometimes flirting"
+    ? "current Vietnamese tiktok/meme/viral slang plus her scene today"
     : isFootball
     ? "latest Ronaldo, Messi, match, and football news from this week"
     : fb001Track === "news"
@@ -3865,23 +3960,32 @@ ${inspiration}
 
 ${
   isVietnam
-    ? `These are scene and life prompts.
-Stay on the assigned track (${vietnamTrack}). Entire post in Vietnamese. Not English.
+    ? `These are CURRENT trends, memes, viral lines, and scene prompts.
+Stay on the assigned track (${vietnamTrack}). Entire post in Vietnamese.
+Pick ONE trend/meme/slang/news beat from the lists if it is actually current. Twist it into THIS scene. Creative wording. Do not say luôn. Do not say ghê luôn.
 ${
   vietnamTrack === "flirting"
-    ? "Soft hint only. Ignore pickup-line headlines. Do not copy internet thả thính."
-    : "Do NOT thả thính. Write a normal girl-life post from the assigned scene. Ignore pickup lines."
+    ? "Soft hint only. Do not copy internet thả thính."
+    : "Do NOT thả thính. Life post, funny and playful, plus a trend twist if it fits."
 }
 
 OPTIONAL CURRENT TREND
 
 ${optionalTrend}
 
-Ignore flirt trends. Use a real-life beat from the scene.`
+Use a trend. Riff it. Do not ignore the list just to write "lười ghê luôn" again.`
     : isFootball
     ? `These are live football headlines, especially Ronaldo, Messi, matches, and related news.
 Pick ONE real story. Write a Facebook fan reaction to it.
 Do not invent scores, transfers, quotes, or matches.`
+    : isFamily
+    ? `These are CURRENT viral family memes, TikTok sounds, and Facebook lines people are reacting to this week.
+The IMAGE overlay (imageQuote) MUST feel trending and funny: a scroll-stopper that gets a laugh, a tag, or "that's my family" in one second.
+Riff a current meme format onto THIS household moment. Do not paste a news headline. The post body can stay a family story. The overlay is the bait.
+
+OPTIONAL CURRENT TREND
+
+${optionalTrend}`
     : fb001Track === "news"
     ? `These are live headlines from the last few days in the US.
 Pick ONE real story. Write a Facebook reaction to it.
@@ -3963,11 +4067,11 @@ ${dna.lengthGuide}
 
 ${
   isVietnam
-    ? `Write the whole post in Vietnamese from this scene: ${vietnamScene?.beat}. Track: ${vietnamTrack}. Giọng giới trẻ, ngắn gọn như nhắn tin. 15-32 words. ${
+    ? `Write the whole post in Vietnamese from this scene: ${vietnamScene?.beat}. Track: ${vietnamTrack}. Giọng người thật, hài, hơi giỡn. 15-32 words. Không dùng chữ luôn. ${
         vietnamTrack === "flirting"
-          ? "Thả thính nhẹ, tinh tế. Một chi tiết nhỏ thôi. Không nói anh, không câu thính mạng, không lộ."
-          : "Đời thường. Không thả thính. Không thơ. Không caption du lịch."
-      } No gió nhẹ, no trái tim. No ALL CAPS. No telegram. No cafe default. No hashtags.`
+          ? "Thả thính nhẹ, tinh tế, hơi giỡn. Một chi tiết nhỏ thôi. Không nói anh, không câu thính mạng, không lộ."
+          : "Đời thường hài. Tự giễu hoặc một chuyện dở nhỏ. Không thả thính. Không thơ. Không caption du lịch. Không khô."
+      } Mix in ONE current trend from the lists if it fits. No gió nhẹ, no trái tim. No ALL CAPS. No telegram. No cafe default. No hashtags. First line is NOT "ngồi bên hồ mà thấy lười ghê" or any scenery + lười stamp.`
     : isFootball
     ? "Write about a real current football story, especially Ronaldo or Messi: news, a match, a goal, form, a record, or related drama. Sound like a fan, not a sports desk. Do not invent facts. Hashtags like #Ronaldo #Messi #Football when they fit."
     : fb001Track === "news"
@@ -4000,24 +4104,37 @@ ${
     ? `This Vietnamese post has NO text on the photo. imageQuote must be an empty string. imagePrompt must describe a candid photo with no overlay, no caption, no quote, no letters, and no words anywhere in the frame.`
     : `The photo MUST include a short, readable hook line. That line is not a recap. It is bait.
 
-imageQuote must be 6-14 words that make someone stop, feel something, and tap to read the rest.
+${
+  isFamily
+    ? "imageQuote must be 4-10 words that make someone laugh or react immediately."
+    : "imageQuote must be 6-14 words that make someone stop, feel something, and tap to read the rest."
+}
 
 ${
   isFamily
-    ? `For this family post, the overlay MUST be funny and quite dramatic.
-Treat a small household thing like a crisis. Sitcom energy. Never soft, warm, or sentimental.
+    ? `For this family post, imageQuote is the overlay. It MUST stop the scroll.
+
+4-10 words. Viral-funny. Trending meme energy. Instant laugh or reaction. Can be ALL CAPS.
+Tied to THIS household moment. Not a recap. Not a sitcom subtitle. Never soft or sentimental.
+If a current meme format is in the trend list, riff it onto this story.
+
+imagePrompt: 0-2 people only. One person, a pair, or just objects in a room. No group of three or more. No crowded table. No family portrait. Extra faces look AI.
 
 Good:
-Mom treated leftovers like a federal crime.
-One missed call and the house went to war.
-Dinner was a hostage situation.
-Dad's silent treatment lasted three Thanksgivings.
+POV: mom found the leftovers
+WHO TOUCHED THE THERMOSTAT
+The group chat went silent
+Not the leftovers being sacred
+Tell me you have siblings
+This family could never
+When dad says he's not mad
 
 Bad:
+Mom treated leftovers like a federal crime.
 Home is where the heart is.
 Family dinners meant everything.
-The house went quiet after that.
-Life is about family.`
+Life is about family.
+Dinner was a hostage situation.`
     : `Pick ONE job for the line:
 - curiosity: tease the interesting part without giving the ending
 - funny: a dry, specific laugh tied to this post
@@ -4084,6 +4201,9 @@ ${options.imageStyle.trim()}`
       previousEndings: isVietnam
         ? (options?.previousPosts || []).slice(0, 6).map(normalizeEnding)
         : undefined,
+      previousHay: isVietnam
+        ? (options?.previousPosts || []).slice(0, 5).join("\n")
+        : undefined,
     });
 
   if (!validation.valid) {
@@ -4094,16 +4214,17 @@ ${options.imageStyle.trim()}`
 
     const repairSystemPrompt = isVietnam
       ? `
-Rewrite this Vietnamese Facebook post in short Gen-Z chat. Like texting a friend. Not a caption. Not a poet.
+Rewrite this Vietnamese Facebook post in short Gen-Z chat. Human, funny, a little playful. Like texting a friend. Not a caption. Not a poet. Not dry.
 
 Fix this problem:
 
 ${validation.reason}
 
 Rules:
-- Entirely Vietnamese. Youth speak: trời, luôn, ghê, lười, thiệt. Normal case.
+- Entirely Vietnamese. Youth chat. Funny, playful. Catch a trend if one is listed. No luôn. No ghê luôn. Normal case.
 - 2 short paragraphs. 15-32 words. Cut the rest.
 - No ALL CAPS first line. No telegram (ĐÓI. Tan làm. Về.).
+- Do not open with ngồi bên hồ / mà thấy lười ghê / đứng bên + place. Drop the scenery announcement. Start with a thought or hassle.
 - Banned: ngọt ngào, gió nhẹ, trái tim, ký ức, lãng đãng, lấp lánh, thật tình mà nói, biết đâu, chỉ cần anh, mỏi lòng, ánh mắt.
 - Track is ${vietnamTrack}. ${vietnamTrack === "flirting" ? "Soft hint only. No ăn cơm chưa, no wifi, no anh seen, no thả thính." : "Do not thả thính."}
 - Do not end with a lone Thôi.
@@ -4255,7 +4376,7 @@ Rules:
     dna.imageStrategy,
 
     vietnamScene
-      ? `New photograph of the SAME woman as the attached reference, but a DIFFERENT camera angle and crop. Assigned scene: ${vietnamScene.photo}. ${vietnamAngle ? `Camera: ${vietnamAngle.photo}` : ""} Same hair, skin, and age. Do not copy the reference pose, bikini, or frontal face crop. Change clothes to this scene. Tasteful.`
+      ? `New photograph of the SAME woman as the attached reference, but a DIFFERENT camera angle and crop. Assigned scene: ${vietnamScene.photo}. ${vietnamAngle ? `Camera: ${vietnamAngle.photo}` : ""} Same hair, skin, and age. Do not copy the reference pose, bikini, or frontal face crop. Change clothes to this scene. Pretty and a bit attractive. Fully clothed. Not sexy.`
       : "",
 
     options?.referenceImagePath
@@ -4263,11 +4384,13 @@ Rules:
       : "",
 
     isVietnam
-      ? "Candid phone snapshot. Natural light. Slightly imperfect framing. Looks like a real photo a person took. No poster, no meme layout, no typography."
+      ? "Beautiful-girl setting only: resort, beach, rooftop, flowers, hotel, lantern street, lake, pretty cafe. Attractive and flattering. Fully clothed. NO bikini, lingerie, wet look, cleavage close-up, or sexual pose. NEVER wet market, fish market, supermarket aisle, convenience store, plastic street stall, laundry, city bus, or grimy kitchen."
       : generated.imagePrompt?.trim() ||
         `A candid everyday moment related to ${topic}`,
 
-    "The image must match the exact situation in the Facebook post.",
+    isVietnam
+      ? "Keep the assigned pretty scene. Match the post mood only. Do not invent a market, supermarket, kitchen, laundry, or bus to match a caption."
+      : "The image must match the exact situation in the Facebook post.",
 
     "Natural human behavior and believable surroundings.",
 
@@ -4278,7 +4401,13 @@ Rules:
     isVietnam
       ? "If the reference photo has text, do not copy it. The new photo is clean: only the woman and the scene."
       : isFamily
-      ? "The overlay text must be funny and quite dramatic. Sitcom energy. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans, no sentimental line."
+      ? "Maximum TWO people in the frame, preferably one person or no faces: hands, a phone, leftovers, an empty chair, a room after the fight. No group photo, no crowded dinner, no four kids at the table. Too many faces looks AI-generated."
+      : "",
+
+    isVietnam
+      ? ""
+      : isFamily
+      ? "The overlay text must be a SHORT viral-funny line. Trending meme energy. Instant laugh or reaction. Huge, easy to read, correctly spelled. Not a recap. Not a sitcom subtitle. No sentimental line. No extra slogans."
       : "The overlay text must create curiosity, a laugh, or an emotional hit. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans.",
 
     isVietnam
