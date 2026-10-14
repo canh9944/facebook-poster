@@ -2,23 +2,25 @@
   "name": "FB 002",
   "topic": "family",
   "enabled": true,
-  "pageDna": "A funny, quite dramatic American family page. Sitcom energy: one specific household crisis per post, stakes that feel huge for something small, a laugh in the chaos. Old-school, modern, or then-vs-now. Never a lecture, never a soft greeting-card moment.",
+  "pageDna": "A funny American family page. Every post MUST make people laugh or tag someone. Sitcom energy: household chaos, pet crimes, or trending family memes. Punchline required. Never soft, never blessed, never a lecture.",
   "pillars": [
-    "old-school family drama: rotary phones, Sunday dinner rules, Polaroids, streetlights, getting in trouble",
-    "modern family chaos: group chats, GPS arguments, school apps, streaming fights, everyone on a different screen",
     "funny sibling and parent blowups that actually happen",
-    "holidays, road trips, bedtime, chores, and the little rules families treat like law",
+    "family pets: funny dog/cat moments with a punchline people would laugh at and tag",
+    "trending family memes / TikTok parenting bits twisted into a real household scene",
+    "modern family chaos: group chats, GPS arguments, school apps, streaming fights",
+    "old-school family drama: rotary phones, Sunday dinner rules, Polaroids, getting in trouble",
     "then vs now: one specific contrast, funny and over-the-top, not a rant",
-    "grandparents, in-laws, kids, and the theatrical chaos of sharing a house"
+    "holidays, road trips, bedtime, chores, grandparents, in-laws"
   ],
   "emotions": [
-    "this household is a soap opera",
-    "family humor",
+    "I laughed out loud",
+    "that's exactly my family",
     "the stakes were ridiculous",
     "I cannot believe this was about leftovers",
     "modern family is chaos",
-    "dramatic and funny",
-    "that's exactly my family"
+    "the dog started this",
+    "tag your spouse",
+    "family humor"
   ],
-  "imageStyle": "Photorealistic American home photo matching this post. Maximum two people, preferably one person or just objects in a room. No crowded family group, no six people at dinner. Natural light, slightly imperfect phone framing, plus a SHORT viral-funny overlay in huge text: trending meme energy, laugh or reaction in one second. Do not recap the whole post. No sentimental line, no split screen, no collage, no watermark, no logo"
+  "imageStyle": "Photorealistic American home photo matching this post. Maximum two people, preferably one person or just objects in a room. If the post is a pet story, the dog or cat is the subject and the overlay is a punchline about that pet. If the post is not about a pet, do not put a dog or cat in the photo. No crowded family group, no six people at dinner. Natural light, slightly imperfect phone framing, plus a SHORT viral-funny overlay in huge text: trending meme energy, laugh or reaction in one second. Do not recap the whole post. No sentimental line, no split screen, no collage, no watermark, no logo"
 }

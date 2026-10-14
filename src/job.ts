@@ -3,6 +3,7 @@ import path from "node:path";
 import { db, log } from "./db.js";
 import { generatePost, prepareImageForFacebook, stripAiMentions } from "./content.js";
 import { publishPost } from "./facebook.js";
+import { publishInstagramPost } from "./instagram.js";
 import {
   loadAccounts,
   resolveAccountProfileId,
@@ -112,7 +113,17 @@ export async function runPublishFlow(account: AccountConfig) {
     throw new Error(`Image generation failed for ${account.name}`);
   }
 
-  const imagePath = await prepareImageForFacebook(generated.imagePath);
+  const rawPaths =
+    generated.imagePaths?.filter(Boolean).length
+      ? generated.imagePaths.filter(Boolean)
+      : [generated.imagePath];
+  const imagePaths: string[] = [];
+
+  for (const file of rawPaths) {
+    imagePaths.push(await prepareImageForFacebook(file));
+  }
+
+  const imagePath = imagePaths[0];
   const content = stripAiMentions(generated.content);
   const comment = generated.comment
     ? stripAiMentions(generated.comment)
@@ -133,7 +144,7 @@ export async function runPublishFlow(account: AccountConfig) {
     )
     .run(
       content,
-      imagePath ?? null,
+      imagePaths.join("\n") || imagePath || null,
       account.name,
       new Date().toISOString(),
       "publishing",
@@ -142,7 +153,30 @@ export async function runPublishFlow(account: AccountConfig) {
   const postId = result.lastInsertRowid;
 
   try {
-    await publishPost(content, imagePath, profileId, comment);
+    await publishPost(
+      content,
+      imagePaths.length > 1 ? imagePaths : imagePath,
+      profileId,
+      comment,
+    );
+
+    if (account.postInstagram) {
+      try {
+        log("INFO", `Posting the same content to Instagram for ${account.name}`);
+        await publishInstagramPost(
+          content,
+          imagePaths.length > 1 ? imagePaths : imagePath,
+          profileId,
+        );
+      } catch (error) {
+        log(
+          "ERROR",
+          `Facebook went up, but Instagram failed for ${account.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     db.prepare(
       `

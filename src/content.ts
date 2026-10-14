@@ -13,6 +13,7 @@ const imageDir = path.resolve("data/generated-images");
 export type GeneratedPost = {
   content: string;
   imagePath?: string;
+  imagePaths?: string[];
   comment?: string;
 };
 
@@ -431,7 +432,20 @@ function hasGenericAIPhrase(text: string) {
     /if i can'?t see you/i,
     /caught in 4k/i,
     /it'?s giving\b/i,
-    /\bbuddy,\s/i,
+    /cực khó chịu/i,
+    /khó chịu luôn/i,
+    /tự hỏi/i,
+    /có ai cũng/i,
+    /có ai giống/i,
+    /không nhỉ/i,
+    /tội lỗi không/i,
+    /réo ầm/i,
+    /ầm ĩ/i,
+    /hôm nay anh (bảo|nói)/i,
+    /tự dưng nghĩ/i,
+    /đang ngắm/i,
+    /cạn kiệt/i,
+    /năng lượng/i,
   ];
 
   return patterns.some((pattern) => pattern.test(text.trim()));
@@ -486,16 +500,68 @@ function looksLikeCaptionVoice(text: string) {
     letters === letters.toUpperCase() &&
     letters !== letters.toLowerCase();
 
-  const sentences = text
-    .split(/[.!?\n]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  const short =
-    sentences.filter((part) => part.split(/\s+/).length <= 2).length;
-  const telegram =
-    sentences.length >= 3 && short / sentences.length >= 0.6;
+  if (allCaps) {
+    return true;
+  }
 
-  return allCaps || telegram;
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const telegrams = lines.filter((line) => {
+    const words = wordCount(line);
+    return words > 0 && words <= 3 && /[.!?…]$/.test(line);
+  });
+
+  return telegrams.length >= 2;
+}
+
+function looksLikeForcedVietnamChat(text: string) {
+  const body = text.toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (
+    /có ai (cũng|giống|nghe|như|biết)|ai cũng thấy|tự hỏi|không nhỉ\s*\??$|không vậy\s*\??$|mình tội lỗi|cực khó chịu|khó chịu luôn|réo ầm|ầm ĩ/.test(
+      body,
+    )
+  ) {
+    return true;
+  }
+
+  // Fake diary / fake dialogue / overthinking (not real chat)
+  if (
+    /hôm nay anh (bảo|nói)|anh bảo\s*:|anh nói\s*:|tự dưng nghĩ|đang ngắm|cạn kiệt|năng lượng|học xong mà|không làm gì à|không làm gì chắc|mới sáng đã/.test(
+      body,
+    )
+  ) {
+    return true;
+  }
+
+  // Long quoted speech looks written, not typed
+  if (/["“”].{20,}["“”]/.test(text)) {
+    return true;
+  }
+
+  if (
+    /bụng kêu/.test(body) &&
+    /(khó chịu|tội lỗi|có ai|tự hỏi)/.test(body)
+  ) {
+    return true;
+  }
+
+  // Written diary voice: long clauses with "mà ... ," then emotion stamp
+  if (
+    /mà .{8,40},/.test(body) &&
+    /(cực|rất|quá trời|khó chịu|bứt rứt|day dứt)/.test(body)
+  ) {
+    return true;
+  }
+
+  // Narrative opener: "Đang X, ..."
+  if (/^đang\s+\S+.{8,}/.test(body)) {
+    return true;
+  }
+
+  return false;
 }
 
 function lastParagraph(text: string) {
@@ -519,6 +585,10 @@ function validateGeneratedPost(
     shortFunnyHook?: boolean;
     useHashtags?: boolean;
     casualVietnam?: boolean;
+    shortVietnam?: boolean;
+    vietnamIcons?: boolean;
+    familyPets?: boolean;
+    funnyFamily?: boolean;
     previousEndings?: string[];
     previousHay?: string;
   },
@@ -535,6 +605,66 @@ function validateGeneratedPost(
   const beats = splitIntoParagraphs(body).length;
 
   if (rules.casualVietnam) {
+    if (rules.shortVietnam) {
+      if (words < 3) {
+        return {
+          valid: false,
+          reason:
+            "Too empty. One short funny line about this photo. A few words is enough.",
+        };
+      }
+
+      if (words > 18) {
+        return {
+          valid: false,
+          reason:
+            "Too long for a short caption. One funny line. Cut it.",
+        };
+      }
+
+      if (looksLikeScenicLazyOpener(hook)) {
+        return {
+          valid: false,
+          reason:
+            "Do not open with ngồi bên hồ / mà thấy lười ghê.",
+        };
+      }
+
+      if (rules.vietnamIcons && !/\p{Extended_Pictographic}/u.test(body)) {
+        return {
+          valid: false,
+          reason:
+            "This caption needs 2-4 emojis that fit the photo.",
+        };
+      }
+
+      if (/\bluôn\b/i.test(body) || /ghê luôn/i.test(body)) {
+        return {
+          valid: false,
+          reason:
+            "Do not use luôn. Find a new wording.",
+        };
+      }
+
+      if (hasGenericAIPhrase(body)) {
+        return {
+          valid: false,
+          reason:
+            "No ngọt ngào, no ăn cơm chưa, no wifi, no thả thính.",
+        };
+      }
+
+      if (looksLikeForcedVietnamChat(body)) {
+        return {
+          valid: false,
+          reason:
+            "Too written. No cực khó chịu luôn, no tự hỏi / có ai cũng... không nhỉ, no Hôm nay anh bảo:, no tự dưng nghĩ. Short spoken chat only.",
+        };
+      }
+
+      return { valid: true, reason: "" };
+    }
+
     if (words < rules.minWords) {
       return {
         valid: false,
@@ -607,6 +737,14 @@ function validateGeneratedPost(
       };
     }
 
+    if (looksLikeForcedVietnamChat(body)) {
+      return {
+        valid: false,
+        reason:
+          "Too written. No Hôm nay anh bảo:, no quotes, no đang ngắm / tự dưng nghĩ / cạn kiệt năng lượng. Text like a friend: short beats, concrete detail, stop.",
+      };
+    }
+
     const ending = normalizeEnding(body);
 
     if (!ending || /^thôi$/i.test(ending)) {
@@ -630,6 +768,36 @@ function validateGeneratedPost(
     }
 
     return { valid: true, reason: "" };
+  }
+
+  if (rules.familyPets) {
+    if (!/\b(dogs?|cats?|pupp(?:y|ies)|kittens?|pup)\b/i.test(body)) {
+      return {
+        valid: false,
+        reason:
+          "The photo is the pet. Write a funny dog or cat story, then a punchline people would laugh at.",
+      };
+    }
+
+    if (
+      /pets are family|fur baby|rainbow bridge|unconditional love|my best friend/i.test(
+        body,
+      )
+    ) {
+      return {
+        valid: false,
+        reason:
+          "Not cute or sentimental. Funny pet story plus a punchline. Make people laugh.",
+      };
+    }
+  }
+
+  if (rules.funnyFamily && looksLikeUnfunnyFamilyPost(body)) {
+    return {
+      valid: false,
+      reason:
+        "Not funny enough. Sitcom chaos + punchline. No soft family essay, no blessed/grateful, no lecture. Make people laugh or tag someone.",
+    };
   }
 
   if (words < rules.minWords || sentences < 3) {
@@ -750,13 +918,32 @@ async function fetchHeadlines(url: string): Promise<string[]> {
 }
 
 async function fetchFamilyMemeTrends() {
-  const query = encodeURIComponent(
+  const queries = [
     "viral family tiktok OR relatable parents meme OR sibling tiktok OR facebook family funny OR that's my mom when:7d",
+    "family dog meme OR cat destroying house tiktok OR relatable pet parents OR guilty dog OR cat dad when:7d",
+    "viral parenting tiktok OR mom vs dad meme OR kids these days funny OR family group chat meme when:7d",
+  ];
+
+  const results = await Promise.allSettled(
+    queries.map((query) =>
+      fetchHeadlines(
+        `https://news.google.com/rss/search?q=${encodeURIComponent(
+          query,
+        )}&hl=en-US&gl=US&ceid=US:en`,
+      ),
+    ),
   );
 
-  return fetchHeadlines(
-    `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`,
+  const headlines = results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
   );
+
+  const unique = headlines.filter(
+    (title, index, list) =>
+      title && list.findIndex((item) => item === title) === index,
+  );
+
+  return shuffle(unique).slice(0, 12);
 }
 
 async function topicTrends(topic: string) {
@@ -885,132 +1072,191 @@ async function collectFootballNews() {
   return shuffle(headlines.filter(Boolean)).slice(0, 10);
 }
 
+type VietnamTrack =
+  | "flirting"
+  | "life"
+  | "travel"
+  | "mood"
+  | "food"
+  | "punchline"
+  | "active";
+
 const VIETNAM_SCENES = [
   {
-    id: "beach-resort",
-    keywords: ["biển", "resort", "hồ bơi"],
-    beat: "ở resort gần biển",
+    id: "beach",
+    keywords: ["biển", "cát"],
+    beat: "ở biển",
+    tracks: ["life", "travel", "mood", "flirting", "punchline"],
     photo:
-      "the same beautiful woman at a Vietnamese beach resort, turquoise water, white sand, sundress or stylish modest resort wear, pretty and attractive, not bikini, golden hour",
+      "candid iPhone photo of the same woman on a real Vietnamese beach, ordinary sand and sea, sundress, daylight, other beach chairs in the background, slightly imperfect framing, not a travel poster",
   },
   {
-    id: "pool",
-    keywords: ["hồ bơi", "villa"],
-    beat: "bên hồ bơi villa",
+    id: "cafe",
+    keywords: ["cafe", "trà sữa"],
+    beat: "ngồi cafe",
+    tracks: ["life", "food", "mood", "flirting", "punchline", "active"],
     photo:
-      "the same beautiful woman by an infinity pool overlooking the sea, stylish summer dress or modest cover-up, pretty and attractive, fully clothed, not a swimsuit shoot, late afternoon sun",
+      "candid iPhone photo of the same woman at a familiar Vietnamese cafe table, iced drink, wooden table, plants, window light, casual clothes, real cafe clutter, not a luxury glass showroom",
   },
   {
-    id: "dalat",
-    keywords: ["Đà Lạt", "thông", "sương"],
-    beat: "Đà Lạt, sương, đồi thông",
+    id: "restaurant",
+    keywords: ["nhà hàng", "ăn"],
+    beat: "ngồi nhà hàng",
+    tracks: ["life", "food", "flirting", "punchline"],
     photo:
-      "the same beautiful woman in a Đà Lạt pine forest cafe terrace, mist, warm coat, soft morning light, pretty",
+      "candid iPhone photo of the same woman at a real restaurant table, plates and glasses, warm indoor lights, modest pretty outfit, looks like a friend took it, not empty cinematic dining hall",
   },
   {
-    id: "flowers",
-    keywords: ["hoa", "vườn"],
-    beat: "vườn hoa",
+    id: "resort",
+    keywords: ["resort", "hồ bơi"],
+    beat: "ở resort",
+    tracks: ["life", "travel", "mood", "punchline"],
     photo:
-      "the same beautiful woman in a Vietnamese flower greenhouse or hydrangea garden, sundress, daylight, magazine look",
+      "candid iPhone photo of the same woman at a normal Vietnamese resort pool with lounge chairs and towels, summer dress, afternoon sun, real hotel pool, not an infinity-pool CGI villa",
+  },
+  {
+    id: "seaside-eats",
+    keywords: ["biển", "nhà hàng"],
+    beat: "nhà hàng gần biển",
+    tracks: ["life", "food", "travel", "punchline"],
+    photo:
+      "candid iPhone photo of the same woman at a seaside restaurant, plastic or wooden chairs, sea in the background, modest clothes, ordinary lunch spot, not a magazine cover",
+  },
+  {
+    id: "hotel-breakfast",
+    keywords: ["khách sạn", "buffet"],
+    beat: "ăn sáng khách sạn",
+    tracks: ["life", "food", "mood", "travel"],
+    photo:
+      "candid iPhone photo of the same woman at a hotel breakfast table, coffee and plates, ordinary hotel restaurant, casual outfit, natural indoor light",
   },
   {
     id: "hoian",
-    keywords: ["Hội An", "đèn lồng"],
-    beat: "phố đèn lồng Hội An",
+    keywords: ["Hội An", "phố"],
+    beat: "đi phố Hội An",
+    tracks: ["life", "travel", "flirting", "punchline"],
     photo:
-      "the same beautiful woman on a Hội An lantern street at dusk, elegant casual dress, warm lantern glow, photogenic",
+      "candid iPhone photo of the same woman on a Hội An street, shops and lanterns, casual dress, dusk, looks handheld, not a glowing postcard",
   },
   {
-    id: "rooftop-bar",
-    keywords: ["rooftop", "skyline"],
-    beat: "rooftop nhìn thành phố",
+    id: "dalat-cafe",
+    keywords: ["Đà Lạt", "cafe"],
+    beat: "cafe Đà Lạt",
+    tracks: ["life", "food", "mood", "travel", "punchline", "active"],
     photo:
-      "the same beautiful woman on a rooftop bar with Saigon skyline at night, pretty modest dress, city lights, attractive candid, not sexy",
+      "candid iPhone photo of the same woman at a Đà Lạt cafe terrace, jacket, coffee, pine trees behind, morning, real cafe, not misty fantasy forest",
   },
   {
-    id: "hotel",
-    keywords: ["khách sạn", "cửa sổ"],
-    beat: "phòng khách sạn cửa sổ lớn",
+    id: "park",
+    keywords: ["công viên", "ghế"],
+    beat: "ngồi công viên",
+    tracks: ["life", "mood", "flirting", "travel", "active"],
     photo:
-      "the same beautiful woman in a boutique hotel room with floor-to-ceiling windows and city view, pretty casual dress, fully clothed, attractive, not a robe, not bedroom-sexy, soft light",
+      "candid iPhone photo of the same woman on a park bench or cafe in a park, trees, daylight, casual clothes, ordinary city park",
   },
   {
-    id: "cafe-glass",
-    keywords: ["cafe", "trà"],
-    beat: "cafe đẹp, kính, cây",
+    id: "night-cafe",
+    keywords: ["cafe đêm", "đèn"],
+    beat: "cafe buổi tối",
+    tracks: ["life", "food", "mood", "flirting", "punchline"],
     photo:
-      "the same beautiful woman in a high-end glass cafe full of plants, iced drink, stylish outfit, natural window light, not a cheap plastic stool stall",
+      "candid iPhone photo of the same woman at a cafe at night, warm indoor lamps, drink on the table, modest outfit, slightly grainy phone look",
   },
   {
-    id: "lake",
-    keywords: ["hồ", "thuyền"],
-    beat: "bên hồ chiều",
+    id: "resort-lobby",
+    keywords: ["resort", "sảnh"],
+    beat: "sảnh resort",
+    tracks: ["life", "travel", "mood"],
     photo:
-      "the same beautiful woman by a calm lake at sunset, light dress, wind in her hair, cinematic Vietnam landscape",
+      "candid iPhone photo of the same woman sitting in a resort lobby or waiting area, sofa, plants, casual travel clothes, real hotel interior",
   },
   {
-    id: "cliff",
-    keywords: ["mũi", "vách đá"],
-    beat: "mũi đá nhìn biển",
+    id: "beach-walk",
+    keywords: ["biển", "đi bộ"],
+    beat: "đi bộ gần biển",
+    tracks: ["life", "travel", "mood", "flirting", "active"],
     photo:
-      "the same beautiful woman on a coastal cliff at golden hour, ocean behind her, elegant casual clothes, fashion- candid",
+      "candid iPhone photo of the same woman walking a beach path or promenade, sundress, sea nearby, daytime, other people far away, not empty CGI shore",
   },
   {
-    id: "gallery",
-    keywords: ["gallery", "bảo tàng"],
-    beat: "trong gallery",
+    id: "gym",
+    keywords: ["gym", "tập"],
+    beat: "đi gym",
+    tracks: ["active", "life", "mood"],
     photo:
-      "the same beautiful woman in a bright art gallery, modern dress, clean architecture, editorial lighting",
+      "candid iPhone photo of the same woman at a normal gym or fitness studio, athletic top and leggings fully covering, water bottle, mirrors in background, after a set, not a fitness influencer shoot, not sexy",
   },
   {
-    id: "boutique",
-    keywords: ["boutique", "shop"],
-    beat: "trong boutique",
+    id: "yoga",
+    keywords: ["yoga", "mat"],
+    beat: "tập yoga",
+    tracks: ["active", "life", "mood"],
     photo:
-      "the same beautiful woman in a chic clothing boutique with mirrors and warm lights, stylish outfit, tasteful",
+      "candid iPhone photo of the same woman on a yoga mat in a bright studio or living room corner, modest sportswear, water bottle nearby, calm but imperfect phone framing, fully clothed, not sexy",
   },
   {
-    id: "car-night",
-    keywords: ["xe", "đèn thành phố"],
-    beat: "ngồi xe nhìn đèn thành phố",
+    id: "running",
+    keywords: ["chạy", "jogging"],
+    beat: "đi chạy",
+    tracks: ["active", "life", "mood"],
     photo:
-      "the same beautiful woman in a nice car at night, city bokeh through the window, pretty outfit, cinematic",
+      "candid iPhone photo of the same woman after a jog in a city park, sportswear and sneakers, slightly messy hair, daylight, ordinary path, not a marathon ad",
   },
   {
-    id: "plane",
-    keywords: ["máy bay", "cửa sổ"],
-    beat: "ghế cửa sổ máy bay",
+    id: "badminton",
+    keywords: ["cầu lông", "vợt"],
+    beat: "đánh cầu lông",
+    tracks: ["active", "life"],
     photo:
-      "the same beautiful woman at an airplane window seat, headphones, chic travel outfit, clouds outside, pretty lighting",
+      "candid iPhone photo of the same woman holding a badminton racket at an outdoor or indoor court, sports clothes, shoes, ordinary Vietnamese sports court, daylight, not a pro athlete shot",
   },
   {
-    id: "balcony-view",
-    keywords: ["ban công", "view"],
-    beat: "ban công view đẹp",
+    id: "cycling",
+    keywords: ["xe đạp", "đạp"],
+    beat: "đạp xe",
+    tracks: ["active", "life", "travel"],
     photo:
-      "the same beautiful woman on a high-rise balcony with a sweeping city or sea view, pretty casual evening outfit, fully clothed, attractive, no laundry, cinematic",
+      "candid iPhone photo of the same woman with a city bicycle in a park or quiet street, casual active clothes, helmet optional, daylight, ordinary Vietnam street, not a cycling magazine cover",
   },
   {
-    id: "night-pretty",
-    keywords: ["phố đêm", "neon"],
-    beat: "phố đêm đẹp",
+    id: "swim-lane",
+    keywords: ["bơi", "hồ bơi"],
+    beat: "đi bơi",
+    tracks: ["active", "life", "mood"],
     photo:
-      "the same beautiful woman walking a photogenic night street with neon reflections, stylish outfit, not a wet market, not parked motorbikes as the subject",
+      "candid iPhone photo of the same woman at a public or hotel pool lane, modest one-piece swimsuit or swim dress covering the body, goggles or towel nearby, real pool tiles, not bikini, not sexy, not CGI infinity pool",
   },
   {
-    id: "spa",
-    keywords: ["spa", "resort"],
-    beat: "spa resort",
+    id: "bookstore",
+    keywords: ["hiệu sách", "sách"],
+    beat: "đi hiệu sách",
+    tracks: ["active", "life", "mood"],
     photo:
-      "the same beautiful woman in a resort spa lounge with stone, plants, and soft light, pretty casual resort outfit, fully clothed, no robe, attractive, modest",
+      "candid iPhone photo of the same woman in a bookstore aisle holding a paperback, casual pretty outfit, shelves behind her, warm indoor light, real shop clutter, not a fashion editorial",
   },
   {
-    id: "sunrise-beach",
-    keywords: ["bình minh", "cát"],
-    beat: "bình minh trên biển",
+    id: "reading-cafe",
+    keywords: ["đọc sách", "sách"],
+    beat: "ngồi đọc sách",
+    tracks: ["active", "life", "mood", "food"],
     photo:
-      "the same beautiful woman walking a quiet beach at sunrise, sundress, attractive, fully clothed, not bikini, not wet, film-like light",
+      "candid iPhone photo of the same woman at a cafe table reading a book, iced drink beside her, casual clothes, window light, real cafe, book cover not a famous brand logo focus",
+  },
+  {
+    id: "study-desk",
+    keywords: ["học", "laptop"],
+    beat: "ngồi học",
+    tracks: ["active", "life", "mood"],
+    photo:
+      "candid iPhone photo of the same woman at a desk or cafe corner with a notebook or laptop, earbuds, coffee, casual clothes, studying or working, ordinary room, not a corporate shoot",
+  },
+  {
+    id: "tennis",
+    keywords: ["tennis", "sân"],
+    beat: "chơi tennis",
+    tracks: ["active", "life"],
+    photo:
+      "candid iPhone photo of the same woman on a tennis court with a racket, sports skirt or shorts and top fully clothed, daylight, ordinary club court, not a sports campaign",
   },
 ];
 
@@ -1056,26 +1302,154 @@ const VIETNAM_ANGLES = [
       "taken from farther away. More street or room in the frame. She is smaller, doing something ordinary.",
   },
   {
-    id: "low-table",
+    id: "full-body",
     photo:
-      "camera at table or chest height, slightly below. She is busy, not looking into the lens.",
+      "full-body candid iPhone photo, head to shoes in frame, she is standing or walking in the place, modest clothes, feet visible, not a fashion catalog, not cropped at the chest",
+  },
+  {
+    id: "full-body-sit",
+    photo:
+      "full-body or three-quarter from head to shoes or at least to the knees, she is sitting in the scene, candid phone photo, not a portrait crop",
+  },
+  {
+    id: "wide-standing",
+    photo:
+      "wide shot from a few steps back, full figure standing, lots of the cafe/beach/restaurant around her, handheld, not a close face crop",
+  },
+  {
+    id: "selfie",
+    photo:
+      "casual iPhone front-camera selfie, arm's length, she is looking toward the phone, familiar cafe/restaurant/beach behind her, slightly imperfect, natural skin, not a beauty studio, not a duck-face beauty shot",
+  },
+  {
+    id: "selfie-mirror",
+    photo:
+      "casual mirror selfie in a cafe bathroom, hotel room, or restaurant restroom, phone in her hand, outfit and place visible in the mirror, fully clothed, real tiles and lighting, not glamorous, not sexy",
   },
 ];
-
-type VietnamTrack = "flirting" | "life" | "travel" | "mood" | "food";
 
 function pickVietnamTrack(previousPosts: string[]): VietnamTrack {
   const last = (previousPosts[0] || "").toLowerCase();
   const flirtLast = /thả thính|ăn cơm chưa|anh seen|wifi nhà em/.test(last);
-  const pool: VietnamTrack[] = flirtLast
-    ? ["life", "life", "travel", "mood", "food"]
-    : ["life", "life", "life", "travel", "mood", "food", "flirting"];
+  const punchLast =
+    /anh nói|mê tôi|thôi được rồi|😉|anh bảo/.test(last);
+  const activeLast =
+    /\b(gym|yoga|chạy|cầu lông|tennis|bơi|đạp|sách|học|tập)\b/.test(last);
+
+  if (flirtLast || punchLast) {
+    return pick(["life", "life", "travel", "mood", "food", "active", "active"]);
+  }
+
+  if (activeLast) {
+    return pick([
+      "life",
+      "life",
+      "travel",
+      "mood",
+      "food",
+      "active",
+      "flirting",
+    ]);
+  }
+
+  return pick([
+    "life",
+    "life",
+    "life",
+    "active",
+    "active",
+    "travel",
+    "mood",
+    "food",
+    "flirting",
+    "punchline",
+  ]);
+}
+
+function pickVietnamAngle() {
+  const pool = [
+    ...VIETNAM_ANGLES,
+    ...VIETNAM_ANGLES.filter((item) =>
+      /full-body|wide-standing|selfie/.test(item.id),
+    ),
+  ];
 
   return pick(pool);
 }
 
-function pickVietnamAngle() {
-  return pick(VIETNAM_ANGLES);
+function pickVietnamAlbumCount() {
+  return pick([1, 1, 2, 2, 2, 3]);
+}
+
+function pickVietnamAlbumAngles(
+  count: number,
+  first: (typeof VIETNAM_ANGLES)[number],
+) {
+  const rest = shuffle(
+    VIETNAM_ANGLES.filter((item) => item.id !== first.id),
+  );
+
+  return [first, ...rest].slice(0, Math.max(1, count));
+}
+
+function vietnamOutfitLock(sceneId: string) {
+  if (/beach|seaside/.test(sceneId)) {
+    return "LOCKED OUTFIT: the same light sundress and sandals, same color, not a bikini";
+  }
+
+  if (/resort/.test(sceneId)) {
+    return "LOCKED OUTFIT: the same modest summer dress, same color, fully clothed, not a bikini";
+  }
+
+  if (sceneId === "dalat-cafe") {
+    return "LOCKED OUTFIT: the same light jacket over the same top, same color";
+  }
+
+  if (sceneId === "hoian") {
+    return "LOCKED OUTFIT: the same casual dress, same color";
+  }
+
+  if (sceneId === "hotel-breakfast") {
+    return "LOCKED OUTFIT: the same casual breakfast outfit, same color";
+  }
+
+  if (sceneId === "park") {
+    return "LOCKED OUTFIT: the same casual daytime outfit, same color";
+  }
+
+  if (/gym|yoga|running|badminton|tennis|cycling/.test(sceneId)) {
+    return "LOCKED OUTFIT: the same modest sportswear set, same color top and bottoms, sneakers, fully covered, not sexy";
+  }
+
+  if (sceneId === "swim-lane") {
+    return "LOCKED OUTFIT: the same modest one-piece swimsuit or swim dress, same color, fully covering, not a bikini";
+  }
+
+  if (/bookstore|reading-cafe|study-desk/.test(sceneId)) {
+    return "LOCKED OUTFIT: the same casual pretty day outfit, same color top, same style";
+  }
+
+  return "LOCKED OUTFIT: the same modest cafe/restaurant outfit, same top color, same style";
+}
+
+type VietnamCaptionStyle = "chat" | "short" | "icons";
+
+function pickVietnamCaptionStyle(
+  track: VietnamTrack,
+  previousPosts: string[],
+): VietnamCaptionStyle {
+  if (track === "punchline") {
+    return "chat";
+  }
+
+  const last = (previousPosts[0] || "").replace(/\s+/g, " ").trim();
+  const lastShort = wordCount(last) > 0 && wordCount(last) < 14;
+
+  if (lastShort) {
+    return "chat";
+  }
+
+  return pick(["chat", "chat", "chat", "chat", "short", "icons"]);
 }
 
 const VIETNAM_CLOSERS = [
@@ -1114,15 +1488,22 @@ function pickVietnamCloser(previousPosts: string[]) {
   return pick(unused.length ? unused : VIETNAM_CLOSERS.filter(Boolean));
 }
 
-function pickVietnamScene(previousPosts: string[]) {
+function pickVietnamScene(
+  previousPosts: string[],
+  track?: VietnamTrack | null,
+) {
   const hay = previousPosts.join("\n").toLowerCase();
-  const unused = VIETNAM_SCENES.filter(
+  const matching = track
+    ? VIETNAM_SCENES.filter((scene) => scene.tracks.includes(track))
+    : VIETNAM_SCENES;
+  const pool = matching.length ? matching : VIETNAM_SCENES;
+  const unused = pool.filter(
     (scene) =>
       !scene.keywords.some((word) => hay.includes(word)) &&
       !hay.includes(scene.beat),
   );
 
-  return pick(unused.length ? unused : VIETNAM_SCENES);
+  return pick(unused.length ? unused : pool);
 }
 
 const VIETNAM_SEEDS = [
@@ -1143,6 +1524,13 @@ const VIETNAM_SEEDS = [
   "Đừng hiểu nhầm. Em hỏi anh bận không là em có chuyện. Chuyện là nhớ.",
 ];
 
+const VIETNAM_PUNCHLINE_SEEDS = [
+  "Anh nói.. anh không mê tín !!\n\nThôi được rồi.. anh có thể mê tôi 😉",
+  "Anh bảo em đừng nghĩ nhiều.\n\nVậy anh nghĩ hộ đi. Em để chỗ.",
+  "Anh nói không đói.\n\nNgồi nhìn em ăn cũng được mà.",
+  "Anh bảo đi rum chậm thôi.\n\nChậm được. Miễn rum về phía em.",
+];
+
 const VIETNAM_LIFE_SEEDS = [
   "Chụp 20 tấm. Xóa 19. Tấm đẹp nhất cũng xóa vì mặt hơi dừ.",
   "Gọi size lớn. Uống 2 ngụm. Đầy. Em vẫn khoe ly.",
@@ -1154,6 +1542,12 @@ const VIETNAM_LIFE_SEEDS = [
   "Đói. Chọn lâu vì không muốn sai. Sai vẫn được.",
   "Chưa makeup. Vẫn ra đứng. Camera xa một chút là xong.",
   "Ly hết từ lâu. Em chưa đứng dậy. Giữ chỗ cho không khí.",
+  "Đăng ký tập 1 tháng. Đi được 3 buổi. App vẫn nhắc đều.",
+  "Yoga 1 tiếng. Về nhà ngồi thẳng không nổi 5 phút.",
+  "Chạy 2km. Story nói 'morning run'. Thật ra đi bộ nửa đường.",
+  "Mua sách hay. Đọc 12 trang. Bookmark vẫn ở trang 12 cả tuần.",
+  "Cầu lông với bạn. Thua. Đổ thừa vợt.",
+  "Học 2 tiếng. Nhìn lại chỉ ghi được nửa trang. Trà thì hết.",
 ];
 
 const VIETNAM_FLIRT_LINES = [
@@ -1315,21 +1709,25 @@ async function collectUSHistoryEvents() {
 const PAGE_DNA: Record<string, PageDna> = {
   vietnam: {
     identity:
-      "A Vietnamese Facebook page of a young girl: short Gen-Z Vietnamese, human, funny, a little playful. Joke at herself or a small hassle. Catch a trend. Never stamp luôn. Life first. Flirting only if light.",
+      "A Vietnamese Facebook page of a young active girl: short Gen-Z Vietnamese, sounds like texting a friend, funny, a little playful. Life, travel, cafe, sports, reading, study. Concrete beats. Never written diary. Never stamp luôn. Flirting only if light.",
 
     pillars: [
-      "chuyện nhỏ hài, tự giễu, hơi giỡn",
+      "chuyện nhỏ hài, tự giễu, hơi giỡn — nói như nhắn tin",
       "đi chỗ đẹp mà vẫn dở: quên kem, chụp xóa, giả vờ chill",
+      "sporty girl: gym, yoga, chạy, cầu lông, bơi — vẫn hài, không influencer",
+      "đọc sách / học / hiệu sách — chăm nhưng vẫn giỡn, không tự hỏi có ai cũng...",
       "thả thính nhẹ, tinh tế, không lộ, không câu thính mạng",
       "đói, trà sữa, chọn menu lâu, cafe đẹp",
       "mood lười nhưng giỡn, không caption buồn",
-      "nói chuyện giới trẻ, bắt trend — không sến, không luôn",
+      "nói chuyện giới trẻ, bắt trend — không sến, không luôn, không viết văn",
     ],
 
     emotions: [
       "đang giỡn",
       "cười vì chuyện dở",
       "hơi lười mà vẫn đi",
+      "vừa tập xong còn thở",
+      "đọc sách mà vẫn mở phone",
       "trêu nhẹ",
       "đói hài",
       "đi chơi một mình cho vui",
@@ -1354,16 +1752,16 @@ const PAGE_DNA: Record<string, PageDna> = {
     ],
 
     imageStrategy:
-      "Photorealistic pretty photo of the SAME woman as the attached reference (hair, skin, age). Beautiful-girl feed: beach, resort, rooftop, flowers, hotel, lantern street, lake, pool, boutique cafe. Attractive and flattering, a little pretty, NOT sexy: fully clothed, no bikini, no lingerie, no wet look, no cleavage close-up, no sexual pose. Sundress or stylish modest outfit. Soft smile or playful glance. NEVER a wet market, supermarket, convenience store, plastic-stool street stall, laundry line, bus, or messy kitchen. New camera angle every post. NO text on the image. No logos, watermarks, collage, or split screen.",
+      "Candid iPhone photo of the SAME woman as the attached reference (hair, skin, age). Familiar real places: cafe, restaurant, beach, resort, park, gym, yoga studio, bookstore, study desk, sports court. Sometimes sports or reading. Sometimes a casual SELFIE. Sometimes a FULL-BODY shot. Sometimes a friend took it. Looks real: slightly imperfect crop, real furniture, natural skin. NOT cinematic, NOT CGI. Attractive but not sexy: fully clothed, modest sportswear when active, no bikini. NEVER wet market, supermarket, laundry, or bus. New camera angle every post. NO text on the image. No logos, watermarks, collage, or split screen.",
 
     allowEmojis: false,
     useHashtags: false,
     minWords: 12,
     maxWords: 40,
     lengthGuide:
-      "Usually 15-32 Vietnamese words. Short. Youth chat. Two tiny paragraphs is enough. If it is longer than a Zalo message, cut it.",
+      "Usually 12-28 Vietnamese words. Short. Like texting. Two tiny paragraphs is enough. If it sounds written or has luôn / không nhỉ, cut it.",
     hookRule:
-      "Open with one short spoken line, normal case, like texting a friend. Funny or playful if you can. Do NOT start by announcing the scenery (ngồi bên hồ, đứng trên rooftop, view đẹp mà thấy lười ghê). Jump into a thought, a small hassle, or a self-tease. Then one more beat. Stop.",
+      "Open with one short spoken line, normal case, like texting a friend. Concrete detail. Funny or playful if you can. Do NOT start by announcing the scenery. Do NOT write diary voice (cực khó chịu luôn / tự hỏi có ai...). Then one more beat. Stop.",
   },
 
   football: {
@@ -1529,25 +1927,27 @@ const PAGE_DNA: Record<string, PageDna> = {
 
   family: {
     identity:
-      "A funny, quite dramatic American family page. Sitcom energy: one specific household crisis per post, stakes that feel huge for something small, a laugh in the chaos. Old-school, modern, or then-vs-now. Never a lecture, never a soft greeting-card moment.",
+      "A funny American family page. Every post MUST make people laugh or tag someone. Sitcom energy: household chaos, pet crimes, or trending family memes. Punchline required. Never soft, never blessed, never a lecture.",
 
     pillars: [
-      "old-school family drama: rotary phones, Sunday dinner rules, Polaroids, streetlights, getting in trouble",
-      "modern family chaos: group chats, GPS arguments, school apps, streaming fights, everyone on a different screen",
       "funny sibling and parent blowups that actually happen",
-      "holidays, road trips, bedtime, chores, and the little rules families treat like law",
+      "family pets: funny dog/cat moments with a punchline people would laugh at and tag",
+      "trending family memes / TikTok parenting bits twisted into a real household scene",
+      "modern family chaos: group chats, GPS arguments, school apps, streaming fights",
+      "old-school family drama: rotary phones, Sunday dinner rules, Polaroids, getting in trouble",
       "then vs now: one specific contrast, funny and over-the-top, not a rant",
-      "grandparents, in-laws, kids, and the theatrical chaos of sharing a house",
+      "holidays, road trips, bedtime, chores, grandparents, in-laws",
     ],
 
     emotions: [
-      "this household is a soap opera",
-      "family humor",
+      "I laughed out loud",
+      "that's exactly my family",
       "the stakes were ridiculous",
       "I cannot believe this was about leftovers",
       "modern family is chaos",
-      "dramatic and funny",
-      "that's exactly my family",
+      "the dog started this",
+      "tag your spouse",
+      "family humor",
     ],
 
     inspirationSources: [
@@ -1562,10 +1962,10 @@ const PAGE_DNA: Record<string, PageDna> = {
     formats: [
       "funny",
       "funny",
+      "funny",
+      "funny",
       "unexpected",
-      "observation",
       "before_after",
-      "relatable",
     ],
 
     hookMechanisms: [
@@ -1574,20 +1974,19 @@ const PAGE_DNA: Record<string, PageDna> = {
       "curiosity",
       "observation",
       "recognition",
-      "confession",
     ],
 
     imageStrategy:
-      "One photorealistic American home photo matching THIS post. Maximum TWO people, preferably one person or just hands/objects in an empty room. No group portrait, no crowded dinner table, no five-person family shot — that looks fake. Natural light, slightly imperfect phone framing. Overlay a SHORT viral-funny line in huge readable text: trending meme energy, laugh in one second, makes people comment or tag. Do not recap the post. Do not use a soft or sentimental line. No split screen, no collage, no logos, no watermarks.",
+      "One photorealistic American home photo matching THIS post. Maximum TWO people, preferably one person or just hands/objects. If the post is a pet story, the dog or cat is the subject and the overlay is a punchline about that pet. If the post is not about a pet, do NOT put a dog or cat in the photo. No group portrait, no crowded dinner table, no five-person family shot — that looks fake. Natural light, slightly imperfect phone framing. Overlay a SHORT viral-funny line in huge readable text: trending meme energy, laugh in one second. Do not recap the post. Do not use a soft or sentimental line. No split screen, no collage, no logos, no watermarks.",
 
     allowEmojis: false,
     useHashtags: true,
     minWords: 50,
-    maxWords: 180,
+    maxWords: 160,
     lengthGuide:
-      "Usually 70-140 words. Enough for one real family crisis. Never pad.",
+      "Usually 55-110 words. Funny first. One chaos scene, then a punchline people would laugh at. Never pad. Never soft.",
     hookRule:
-      "Start with one catching sentence, on its own first line, in ALL CAPS, about this exact family moment. Funny and quite dramatic. Tease the household crisis without dumping the ending. Then tell the scene with sitcom stakes. Land on a laugh. Do not moralize. Do not go soft or sentimental.",
+      "Start with one catching sentence, on its own first line, in ALL CAPS, that is already funny. Tease the household/pet chaos. Then tell the scene with sitcom stakes. End on a punchline. If it is only relatable and not funny, rewrite it.",
   },
 
   nostalgia: {
@@ -1691,29 +2090,36 @@ VIETNAMESE PAGE VOICE (required)
 
 Write like a young Vietnamese girl posting on Facebook / Zalo. Gen-Z chat. Short. Entirely Vietnamese. Human. Funny. A little playful.
 
-Sound like talking to friends: trời, thiệt, hen, kìa, xỉu, úi, mình. Casual. Vary the words. Never stamp luôn or ghê luôn on every line.
+Sound like talking to friends on Messenger/Zalo: trời, thiệt, hen, kìa, xỉu, úi, mình. Casual. Short beats. Vary the words. Never stamp luôn or ghê luôn on every line.
 
 Do this:
-- SHORT. About 2 short paragraphs. 15-32 words total. Cut extra sentences.
+- SHORT. Usually 2 short paragraphs, 12-28 words. If CAPTION SHAPE says one line, write ONE short funny line and stop.
 - Normal capitalization. No ALL CAPS first line.
+- Sound like she typed it in 10 seconds. Concrete thing first. Then one dry beat. Stop.
 - Funny because a small thing went a bit wrong, or she is teasing herself. Playful, not dry, not a sad lazy caption.
 - Creative youth chat. New wording every post. Catch a current trend/meme/slang/food/weather if the inspiration list has one — twist it into THIS scene with a tiny joke.
 - Spoken variety: "lười quá trời", "đói muốn xỉu", "chụp xong xóa", "giả vờ chill". NOT "X ghê luôn".
-- If this is a life/mood/food/travel post: no flirting at all. Still funny.
-- If this is a flirting post: very light and playful. Imply, do not declare. No pickup lines. Do not talk to 'anh'. Do not say thả thính.
+- If this is a life/mood/food/travel/active post: no flirting at all. Still funny. Do NOT invent anh dialogue. Do NOT write "Hôm nay anh bảo".
+- If this is an active post: sports, reading, study, or a healthy-girl habit in THIS photo. Joke at herself (mệt, lười giữa chừng, đọc 3 trang rồi nghỉ). Not an influencer caption. Not motivational. Not a fake conversation with anh.
+- If this is a flirting post: very light and playful. Imply, do not declare. No pickup lines. Do not talk to 'anh'. Do not say thả thính. No fake quoted dialogue.
+- If this is a punchline post: ONLY two short spoken lines. Line 1 short (Anh bảo không đói.). Line 2 twist. NO "Hôm nay anh bảo:". NO long quotes. NO "đang ngắm / tự dưng nghĩ". Can talk to anh. One emoji at the end is OK. Invent a NEW pun. Do not copy mê tín / mê tôi.
 
 Never use:
 ngọt ngào, dịu dàng, lung linh, lấp lánh, lãng đãng, bình yên, ký ức, ánh mắt, trái tim, tâm hồn, xao xuyến, thổn thức, mỏi lòng, rung động, gió nhẹ, lá rụng, sáng rực, thật tình mà nói, biết đâu, chỉ cần anh, như một, tựa như, gây ấn tượng, mong chờ.
 No English slang dump (slay, vibe, era) unless one word slips in naturally.
 No lộ thính: ăn cơm chưa, wifi nhà em, anh seen, anh mang em về, lần thứ bảy, thả thính, bắt sóng.
-Banned filler: luôn, ghê luôn, cô đơn ghê, chán ghê, lười ghê luôn.
+Banned filler: luôn, ghê luôn, cô đơn ghê, chán ghê, lười ghê luôn, cực khó chịu, khó chịu luôn, tự hỏi, có ai cũng, không nhỉ, tự dưng nghĩ, đang ngắm, cạn kiệt, năng lượng, Hôm nay anh bảo.
 
 Never:
 - Long posts
 - ALL CAPS first line
 - Caption style: ĐÓI. / Tan làm. / Về ăn mì.
 - Opening stamp: "ngồi bên hồ mà thấy lười ghê", "đứng bên biển mà thấy mệt ghê", or any ngồi/đứng/nằm bên + place + mà thấy + mood
-- Everyone-question ("có ai giống mình không")
+- Everyone-question / bait: "có ai giống mình không", "có ai cũng thấy... không nhỉ", "tự hỏi..."
+- Written diary: "Đọc sách mà bụng kêu réo ầm ĩ, cực khó chịu luôn"
+- Fake scene + fake anh dialogue: "Hôm nay anh bảo: ... Đang ngắm..., tự dưng nghĩ..."
+- Long quotes in quotation marks
+- Metaphor / life lesson (cạn kiệt năng lượng, học xong mà không làm gì)
 - Essay, moral, travel blog
 - Lone "Thôi." as the last line
 - The word luôn (no ghê luôn, no cái gì cũng luôn)
@@ -1730,12 +2136,35 @@ Em vẫn khoe ly.
 Nắng. Ra cho có hình.
 Về là hết pin người.
 
-Good flirt (flirting track only, nhẹ):
-Ghế bên cạnh trống.
-Không giữ chỗ. Chỉ chưa ai ngồi.
+Đọc được 3 trang.
+Snack hết trước.
 
-Mưa. Ướt. Soạn tin rồi xóa.
-Không hỏi có ai đón.
+Bookmark trang 12.
+Tay thì mở snack.
+
+Cà phê sáng.
+Học chưa mở.
+
+Good punchline (punchline track only, lâu lâu):
+Anh nói.. anh không mê tín !!
+Thôi được rồi.. anh có thể mê tôi 😉
+
+Anh bảo không đói.
+Ngồi nhìn em ăn cũng được.
+
+Bad punchline (copied / stale / too written):
+repeating mê tín / mê tôi
+ăn cơm chưa
+wifi nhà em
+Hôm nay anh bảo: "Mới sáng đã cà phê mà không làm gì à?"
+Đang ngắm cây pin, tự dưng nghĩ...
+
+Bad (too written / fake-natural):
+Đọc sách mà bụng kêu réo ầm ĩ, cực khó chịu luôn.
+Túi snack bên cạnh, tự hỏi có ai cũng thấy mình tội lỗi không nhỉ?
+
+Hôm nay anh bảo: "Mới sáng đã cà phê mà không làm gì à?"
+Đang ngắm cây pin, tự dưng nghĩ học xong mà không làm gì chắc cạn kiệt năng lượng luôn!
 
 Bad (too long / too written):
 Hôm nay tan làm muộn quá. Đói mà lười nấu, ra ngoài cũng không muốn nên mình suy nghĩ rất nhiều về việc nên ăn gì và cuối cùng quyết định về ăn mì.
@@ -1757,18 +2186,31 @@ function vietnamTrackRules(
   scene: (typeof VIETNAM_SCENES)[number],
   track: VietnamTrack,
   closer: string,
+  captionStyle: VietnamCaptionStyle = "chat",
 ) {
   const trackGuide: Record<VietnamTrack, string> = {
-    flirting: `THIS POST: soft playful flirting only
-A hint, not a pickup. Imply someone is on her mind without naming anh, without "thả thính", without viral lines (ăn cơm chưa, wifi, seen). One quiet playful detail from THIS scene: empty seat, typed-then-deleted message, rain, leftover space. If a stranger could screenshot it as a thirsty caption, rewrite softer. Do not move her to a cafe.`,
-    life: `THIS POST: a normal life moment in a pretty place, funny and playful
-A small hassle or self-tease (chụp xóa, quên kem, giả vờ chill, chọn lâu). Human. Not dry. Do NOT thả thính. Do not talk to 'anh'. Do not put her in a wet market or supermarket.`,
-    travel: `THIS POST: going somewhere pretty, with a tiny joke
-On the way, waiting, weather, a small inconvenience she laughs at. Not a tourism caption. Not flirting. Not "cuộc đời là những chuyến đi".`,
-    mood: `THIS POST: lazy / mood, but playful
-Lười, chưa makeup, không muốn ra ngoài — joke at herself. Photo is still a pretty room, hotel, or balcony view. Not thirsty. Not a sad poem. Not dry "em lười".`,
-    food: `THIS POST: hungry / eating, funny
-Pretty cafe, rooftop drink, hotel breakfast, trà sữa. Funny because she is extra (size lớn, chọn 10 phút, 2 ngụm). Not a wet market. Not a plastic-stool stall. Not thả thính.`,
+    punchline: `THIS POST: a rare joke-thính tied to THIS photo
+Two SHORT spoken lines only. Like texting.
+Line 1: Anh bảo / Anh nói + short thing (under 8 words). NO "Hôm nay anh bảo:". NO quotation marks around a long sentence.
+Line 2: a twist that fits THIS scene. One emoji at the end is OK.
+Invent a NEW pun. Do NOT copy "mê tín / mê tôi". Do NOT use ăn cơm chưa, wifi, seen.
+Do NOT narrate: no đang ngắm, no tự dưng nghĩ, no cạn kiệt năng lượng.
+12-22 words total.`,
+    flirting: `THIS POST: soft playful flirting in THIS exact place
+A hint from a detail in the photo: empty seat, leftover drink, rain, space beside her. Imply, do not declare. No pickup lines. Do not talk to 'anh'. Do not say thả thính. Do not invent dialogue. Do not move her somewhere else.`,
+    life: `THIS POST: a normal life moment in THIS exact place, funny and playful
+Use one concrete thing from the photo (ly, cát, đĩa, ghế, khăn tắm). A small hassle or self-tease. Do NOT thả thính. Do not talk to 'anh'. Do not invent "anh bảo". Do not write about a different place.`,
+    travel: `THIS POST: she is at THIS place, with a tiny joke
+A small inconvenience here. Not a tourism caption. Not flirting. Not "cuộc đời là những chuyến đi". No anh dialogue. The photo and the post are the same stop.`,
+    mood: `THIS POST: lazy / mood, but she is clearly in THIS photo
+Lười or chưa makeup, joke at herself, plus one detail from the scene. Not thirsty. Not a sad poem. Not dry "em lười". No anh dialogue. Not a different location.`,
+    food: `THIS POST: hungry / eating in THIS photo
+The drink, plate, or menu in the picture is the joke (size lớn, chọn lâu, 2 ngụm). Not a wet market. Not thả thính. No anh dialogue. Do not write about a place that is not in the photo.`,
+    active: `THIS POST: an active / good-girl habit in THIS exact photo
+Sports, gym, yoga, run, badminton, swim, cycling, reading a book, bookstore, or studying. Funny because something small went sideways: mệt sớm, đọc dở, vợt hỏng, quên bình nước, bookmark không nhúc nhích. Short spoken beats. Like:
+Đọc được 3 trang.
+Snack hết trước.
+Do NOT invent anh. Do NOT write Hôm nay anh bảo. Do NOT write đang ngắm / tự dưng nghĩ / năng lượng metaphors. Do NOT thả thính. Do not write a gym workout quote. Do not move her to a cafe if the photo is sport, or to a gym if the photo is a book.`,
   };
 
   const endingRule =
@@ -1777,11 +2219,12 @@ Pretty cafe, rooftop drink, hotel breakfast, trà sữa. Funny because she is ex
   return `${VIETNAM_VOICE_RULES}
 
 ${trackGuide[track]}
+${captionStyle === "short" ? `CAPTION SHAPE: ONE short funny line only. 4-12 Vietnamese words. About THIS photo. No second paragraph.` : captionStyle === "icons" ? `CAPTION SHAPE: one short funny line plus 2-4 emojis that fit the photo (🍜 😭 ✌️ 😴 🥲 ☀️). Vietnamese. Not a sticker dump.` : ""}
 THIS POST SCENE: ${scene.beat}
 Photo setting: ${scene.photo}
 ${endingRule}
 Last line must be different from previous posts. Never use a lone "Thôi." as the ending.
-She is at this place, but do not announce it in sentence 1. No "ngồi bên hồ mà thấy lười ghê". Start with a thought or hassle. Do not move her to a cafe.`;
+The caption and the photo are the same moment. Slip in one real detail from THIS scene. Do NOT open with "ngồi bên hồ mà thấy lười ghê". Do not move her to a different place.`;
 }
 
 const FOOTBALL_VOICE_RULES = `
@@ -1860,53 +2303,140 @@ Do not do this:
 const FAMILY_VOICE_RULES = `
 FAMILY PAGE VOICE (required)
 
-Write like a real person posting about family. Funny. Quite dramatic. Sitcom energy. One household crisis per post.
+FUNNY is the job. If nobody would laugh or tag their spouse, rewrite it.
+Sitcom energy. One concrete household / pet / trending-family moment. Small thing, federal case.
 
 Do this:
-- Start with one catching sentence on its own first line, in ALL CAPS. Related to this exact story. Funny and dramatic enough that people have to read the rest.
-- Stay in the assigned track for this post. Do not turn every post into then vs now.
-- Use a concrete scene: a room, a person, an object, a rule, a habit. Raise the stakes. Treat a small family thing like it was a federal case.
-- The payoff is a laugh. The drama is in how seriously everyone took it.
-- People should think "that's so true" and also "this family is unhinged."
+- Start with one catching sentence on its own first line, in ALL CAPS. Funny enough that people stop scrolling.
+- Stay in the assigned track for this post.
+- Concrete scene: a room, a person, a pet, an object, a rule, a habit.
+- Raise the stakes. Leftovers, the thermostat, the dog on the couch, the group chat going silent.
+- The payoff MUST be a laugh: punchline, twist, or "I cannot believe we fought about this."
+- If a current family/pet trend is in the list, riff it into THIS scene. Do not paste the headline.
+- Pets posts: the photo is the dog or cat. Funny crime + punchline. Not cute caption energy.
 
 Do not do this:
 - Soft, warm, quietly emotional, or greeting-card
-- A generic "kids these days" rant
+- Blessed / grateful / family is everything / cherish / wholesome
+- A lecture, rant, or motivational poster
 - Saying the past was simply better
-- A sad lecture or motivational poster
 - Comparing ten things in one post
 - Inventing fake statistics
-- Forcing a then-vs-now structure when the track is only old-school, only modern, or only funny
+- Cute pet captions, fur baby talk, or rainbow-bridge sentiment
+- A dry observation with no joke
+- Relatable but not funny
 `;
 
-function familyTrackRules(
-  track: "old_school" | "modern" | "funny" | "then_now",
-) {
+type FamilyTrack =
+  | "old_school"
+  | "modern"
+  | "funny"
+  | "then_now"
+  | "pets"
+  | "trending";
+
+function pickFamilyTrack(previousPosts: string[]): FamilyTrack {
+  const last = (previousPosts[0] || "").toLowerCase();
+  const petLast = /\b(dog|cat|puppy|kitten|pet)\b/.test(last);
+  const trendLast =
+    /tiktok|meme|group chat|airtag|school app|gps|thermostat/.test(last);
+
+  if (petLast) {
+    return pick([
+      "funny",
+      "funny",
+      "funny",
+      "trending",
+      "trending",
+      "modern",
+      "then_now",
+    ]);
+  }
+
+  if (trendLast) {
+    return pick([
+      "funny",
+      "funny",
+      "funny",
+      "pets",
+      "pets",
+      "modern",
+      "old_school",
+    ]);
+  }
+
+  return pick([
+    "funny",
+    "funny",
+    "funny",
+    "funny",
+    "pets",
+    "pets",
+    "trending",
+    "trending",
+    "modern",
+    "old_school",
+    "then_now",
+  ]);
+}
+
+function familyTrackRules(track: FamilyTrack) {
   if (track === "old_school") {
     return `${FAMILY_VOICE_RULES}
 
 THIS POST TRACK: old-school family
-Write about one old-school family thing with funny, quite dramatic stakes. Rotary phones, Sunday dinner, Polaroids, streetlights, handwritten notes, one TV, grandparents' house, getting in trouble, calling a friend's house and talking to their mom first. Make the house feel like a courtroom or a soap opera. Do not spend the post explaining how everything is worse now.`;
+Write about one old-school family thing with funny, quite dramatic stakes. Rotary phones, Sunday dinner, Polaroids, streetlights, handwritten notes, one TV, grandparents' house, getting in trouble, calling a friend's house and talking to their mom first. Make the house feel like a courtroom or a soap opera. Land a laugh. Do not spend the post explaining how everything is worse now. Do not make this post about a dog or cat.`;
   }
 
   if (track === "modern") {
     return `${FAMILY_VOICE_RULES}
 
 THIS POST TRACK: modern family
-Write about one modern family thing with funny, quite dramatic stakes. Group chats, GPS arguments, kids FaceTiming grandparents, school apps, streaming fights, AirTags, everyone on a different screen in the same room, packing for travel with chargers. The fight should feel huge. Do not turn it into a phone-bad lecture.`;
+Write about one modern family thing with funny, quite dramatic stakes. Group chats, GPS arguments, kids FaceTiming grandparents, school apps, streaming fights, AirTags, everyone on a different screen in the same room, packing for travel with chargers. The fight should feel huge. Land a laugh. Do not turn it into a phone-bad lecture. Do not make this post about a dog or cat.`;
   }
 
   if (track === "funny") {
     return `${FAMILY_VOICE_RULES}
 
 THIS POST TRACK: funny family
-Write one funny, quite dramatic family moment. Siblings, parents, kids, in-laws, holidays, chores, pets in the house, a rule that made no sense. Play it like a sitcom scene. The laugh is in how extra everyone was. It can be old-school or modern. Do not force a moral.`;
+Write one funny, quite dramatic family moment. Siblings, parents, kids, in-laws, holidays, chores, a rule that made no sense. Play it like a sitcom scene. The laugh is in how extra everyone was. Punchline at the end. It can be old-school or modern. Do not force a moral. Do not make this post about a dog or cat. No pets in this story.`;
+  }
+
+  if (track === "pets") {
+    return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: family pets
+The IMAGE is the pet. The POST is about that same pet. Do not write a family story with a dog in the background.
+
+Write a funny pet story that makes people laugh out loud. What the dog or cat actually did. Concrete. Then land a punchline.
+
+Do this:
+- First line ALL CAPS, a scroll-stopper about THIS pet moment.
+- Short story: the crime, the look on their face, who lost.
+- Punchline last. Tag-your-spouse energy. Overlay on the photo is also a punchline.
+- Name dog or cat. One specific mess: couch, cake, trash, zoomies at 3am, knocking a glass, stealing a sandwich, judging the family.
+
+Do not do this:
+- Cute, wholesome, "pets are family", fur baby, rainbow bridge
+- A family fight that barely mentions the animal
+- Talking to the pet like a stand-up closer for a whole paragraph
+- Soft captions ("my best friend")`;
+  }
+
+  if (track === "trending") {
+    return `${FAMILY_VOICE_RULES}
+
+THIS POST TRACK: trending family
+Riff ONE current viral family / parenting / sibling / household meme or TikTok beat from the trend list into a concrete funny scene at home.
+Make it feel like this week's scroll, not a generic family essay.
+Keep the post funny. Sitcom stakes. Punchline.
+Do not paste the headline. Do not invent celebrity news. Do not make this post about a dog or cat unless the trend itself is clearly a pet meme — if the trend is a pet meme, switch energy to a pet crime with a punchline, still funny.`;
   }
 
   return `${FAMILY_VOICE_RULES}
 
 THIS POST TRACK: then vs now
-Write about one comparison between family life in the old days and family life now. Pick one specific thing. Show how it worked then, in a concrete scene. Show how it works now, in a concrete scene. Both sides should feel funny and quite dramatic. The laugh is in the difference. Do not say the past was simply better.`;
+Write about one comparison between family life in the old days and family life now. Pick one specific thing. Show how it worked then, in a concrete scene. Show how it works now, in a concrete scene. Both sides should feel funny and quite dramatic. The laugh is in the difference. Do not say the past was simply better. Do not make this post about a dog or cat.`;
 }
 
 /**
@@ -2105,12 +2635,19 @@ const PINTEREST_SEEDS: Record<string, string[]> = {
   ],
 
   vietnam: [
-    "beautiful adult Vietnamese woman at a Đà Lạt pine cafe in morning mist, fully clothed, pretty not sexy",
-    "beautiful adult Vietnamese woman in Hội An lantern street at dusk, modest dress",
-    "beautiful adult Vietnamese woman on a Phú Quốc beach at golden hour, sundress, not bikini",
-    "beautiful adult Vietnamese woman at a Hà Nội cafe window in the rain, stylish modest outfit",
-    "beautiful adult Vietnamese woman on a high-rise Sài Gòn balcony with skyline view at night, no laundry, fully clothed",
-    "beautiful adult Vietnamese woman looking out an airplane window, chic travel clothes",
+    "candid phone photo of an adult Vietnamese woman at a normal cafe table with an iced drink",
+    "candid phone photo of an adult Vietnamese woman at a restaurant table",
+    "candid phone photo of an adult Vietnamese woman on a real beach in a sundress, not bikini",
+    "candid phone photo of an adult Vietnamese woman at a hotel resort pool with lounge chairs",
+    "candid phone photo of an adult Vietnamese woman at a seaside restaurant",
+    "candid phone photo of an adult Vietnamese woman at hotel breakfast",
+    "casual iPhone selfie of an adult Vietnamese woman at a cafe table",
+    "casual mirror selfie of an adult Vietnamese woman in a hotel or cafe restroom, fully clothed",
+    "candid phone photo of an adult Vietnamese woman at a gym with a water bottle, modest sportswear",
+    "candid phone photo of an adult Vietnamese woman reading a book at a cafe table",
+    "candid phone photo of an adult Vietnamese woman in a bookstore aisle with a paperback",
+    "candid phone photo of an adult Vietnamese woman after a jog in a park, sneakers",
+    "candid phone photo of an adult Vietnamese woman holding a badminton racket at a court",
   ],
 
   football: [
@@ -2638,7 +3175,7 @@ function looksLikeWeakFamilyOverlay(text: string) {
   const line = text.toLowerCase();
 
   if (
-    /home is where|family is everything|blessed|grateful|meant everything|love of family|heart is|life is about family/.test(
+    /home is where|family is everything|blessed|grateful|meant everything|love of family|heart is|life is about family|pets are family|fur baby|rainbow bridge|unconditional love/.test(
       line,
     )
   ) {
@@ -2655,6 +3192,29 @@ function looksLikeWeakFamilyOverlay(text: string) {
 
   const words = wordCount(text);
   return words < 3 || words > 12 || text.length > 80;
+}
+
+function looksLikeUnfunnyFamilyPost(text: string) {
+  const body = text.toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (
+    /home is where|family is everything|blessed|grateful|meant everything|love of family|life is about family|pets are family|fur baby|rainbow bridge|unconditional love|cherish|warmth of|heartwarming|wholesome|what we can learn|kids these days|back in my day the world|simply better|teach our children|at the end of the day/.test(
+      body,
+    )
+  ) {
+    return true;
+  }
+
+  // Soft essay / no sitcom stakes
+  if (
+    /i love my family|we are so lucky|makes me smile|precious moments|quiet evening|peaceful night|grateful for/.test(
+      body,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function briefFromPost(content: string) {
@@ -3483,32 +4043,39 @@ export async function generatePost(options?: {
 
   const isFamily = /family/i.test(topic);
   const isVietnam = /vietnam|vietnamese|du lich|dulich/i.test(topic);
-  const familyTracks = [
-    "funny",
-    "funny",
-    "then_now",
-    "modern",
-    "old_school",
-  ] as const;
-  const familyTrack = isFamily ? pick([...familyTracks]) : null;
+  const familyTrack = isFamily
+    ? pickFamilyTrack(options?.previousPosts || [])
+    : null;
   const format = isVietnam
     ? pick(["funny", "funny", "observation", "relatable"] as PostFormat[])
     : familyTrack
     ? familyTrack === "then_now"
       ? "before_after"
-      : pick(["funny", "funny", "unexpected", "observation"] as PostFormat[])
+      : "funny"
     : pick(dna.formats);
 
   const hookMechanism =
     pick(dna.hookMechanisms);
 
-  const vietnamScene = isVietnam
-    ? pickVietnamScene(options?.previousPosts || [])
-    : null;
   const vietnamTrack = isVietnam
     ? pickVietnamTrack(options?.previousPosts || [])
     : null;
+  const vietnamScene = isVietnam
+    ? pickVietnamScene(options?.previousPosts || [], vietnamTrack)
+    : null;
   const vietnamAngle = isVietnam ? pickVietnamAngle() : null;
+  const vietnamSelfie = !!vietnamAngle && /selfie/.test(vietnamAngle.id);
+  const vietnamAlbumCount = isVietnam ? pickVietnamAlbumCount() : 1;
+  const vietnamAlbumAngles =
+    isVietnam && vietnamAngle
+      ? pickVietnamAlbumAngles(vietnamAlbumCount, vietnamAngle)
+      : [];
+  const vietnamOutfit = vietnamScene
+    ? vietnamOutfitLock(vietnamScene.id)
+    : "";
+  const vietnamCaption = isVietnam && vietnamTrack
+    ? pickVietnamCaptionStyle(vietnamTrack, options?.previousPosts || [])
+    : "chat";
   const vietnamCloser = isVietnam
     ? pickVietnamCloser(options?.previousPosts || [])
     : "";
@@ -3522,7 +4089,10 @@ export async function generatePost(options?: {
   const familyInspiration: InspirationSource[] =
     familyTrack === "old_school" || familyTrack === "then_now"
       ? ["historical", "old_products", "old_tv", "90s_culture"]
-      : familyTrack === "modern"
+      : familyTrack === "pets" ||
+          familyTrack === "modern" ||
+          familyTrack === "trending" ||
+          familyTrack === "funny"
         ? ["reddit", "pinterest"]
         : dna.inspirationSources;
   const inspirationSource = isVietnam
@@ -3562,7 +4132,7 @@ export async function generatePost(options?: {
   ] = await Promise.all([
     collectInspiration(
       inspirationSource,
-      topic,
+      familyTrack === "pets" ? "family pets" : topic,
     ),
 
     useTrend
@@ -3602,6 +4172,8 @@ export async function generatePost(options?: {
       `${isVietnam && vietnamTrack ? ` / ${vietnamTrack}` : ""}` +
       `${vietnamScene ? ` / ${vietnamScene.id}` : ""}` +
       `${vietnamAngle ? ` / ${vietnamAngle.id}` : ""}` +
+      `${isVietnam && vietnamAlbumCount > 1 ? ` / album-${vietnamAlbumCount}` : ""}` +
+      `${isVietnam ? ` / ${vietnamCaption}` : ""}` +
       `${familyTrack ? ` / ${familyTrack}` : ""}` +
       `${useTrend ? " / trend" : ""}`,
   );
@@ -3619,7 +4191,7 @@ Your job is to create a post that a real person would stop reading, recognize th
 ${
   isVietnam && vietnamTrack
     ? vietnamScene
-      ? vietnamTrackRules(vietnamScene, vietnamTrack, vietnamCloser)
+      ? vietnamTrackRules(vietnamScene, vietnamTrack, vietnamCloser, vietnamCaption)
       : VIETNAM_VOICE_RULES
     : isFootball
     ? FOOTBALL_VOICE_RULES
@@ -3635,13 +4207,27 @@ ${
 }
 CONTENT PRINCIPLES
 
-1. ${isVietnam ? "Write short Gen-Z Vietnamese. Human, funny, playful. Catch a current trend if one is in the list. 15-32 words. Never luôn / ghê luôn. Not ALL CAPS. Flirting track: light and playful only." : "Write natural American English."}
+1. ${
+  isVietnam
+    ? vietnamTrack === "punchline"
+      ? "Write a two-line Vietnamese joke-thính like texting. Anh bảo X. Twist. No Hôm nay anh bảo:. No long quotes. No đang ngắm / tự dưng nghĩ. 12-22 words. Never luôn. Invent a new pun, do not copy mê tín."
+      : vietnamCaption === "short" || vietnamCaption === "icons"
+        ? `ONE short funny Vietnamese line about THIS photo. ${vietnamCaption === "icons" ? "Add 2-4 emojis." : "Usually no emoji."} 4-12 words. Then stop.`
+        : "Write short Gen-Z Vietnamese like texting a friend. Human, funny, playful. 12-28 words. Never luôn / ghê luôn / cực khó chịu luôn / tự hỏi / có ai cũng... không nhỉ / Hôm nay anh bảo / tự dưng nghĩ. Not ALL CAPS. Active track: sports/reading/study joke in this photo. Flirting track: light and playful only. Never invent fake anh dialogue outside punchline."
+    : "Write natural American English."
+}
 2. Sound human, not like an AI copywriter.
 3. Prefer concrete details over generic emotional language.
 4. Start close to the interesting part.
 5. Do not spend half the post setting up the situation.
 6. Give the reader a reason to keep reading.
-7. ${isVietnam ? "Stop after two short chat lines. No essay payoff. No moral." : "Every post must have a payoff: a laugh, a recognition hit, a useful takeaway, an earned emotion, or a question worth answering. Not every post needs a valuable lesson."}
+7. ${
+  isVietnam
+    ? vietnamCaption === "short" || vietnamCaption === "icons"
+      ? "Stop after one short funny line. No second paragraph. No essay."
+      : "Stop after two short chat lines. No essay payoff. No moral."
+    : "Every post must have a payoff: a laugh, a recognition hit, a useful takeaway, an earned emotion, or a question worth answering. Not every post needs a valuable lesson."
+}
 8. Every sentence must earn its place.
 9. Do not add words simply to reach a target length.
 10. Avoid exaggerated storytelling.
@@ -3652,7 +4238,11 @@ CONTENT PRINCIPLES
 15. Do not make the post sound like an advertisement.
 16. Do not mention Reddit, Pinterest, Google News, sources, prompts, AI, or this instruction.
 17. Do not copy source wording.
-18. Format the post with real line breaks. Short paragraphs. A blank line between paragraphs. Never one wall of text.
+18. ${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "One line is enough. Do not add a second paragraph to look complete."
+    : "Format the post with real line breaks. Short paragraphs. A blank line between paragraphs. Never one wall of text."
+}
 
 IMPORTANT ABOUT PERSONAL STORIES
 
@@ -3778,7 +4368,7 @@ Use exactly 2-4 hashtags on their own last line, after a blank line.
 
 They must be specific to this post and this topic.
 
-Good: #DuLich #Vietnam #DaLat #HoiAn #Cafe #Ronaldo #Messi #Football #FamilyLife
+Good: #DuLich #Vietnam #DaLat #HoiAn #Cafe #Ronaldo #Messi #Football #FamilyLife #FamilyPets
 Bad: #ThaThinh #Quote #Flirt #LifeChangingMoment #Blessed #GoodVibesOnly #Heartwarming #RelatableContent
 
 Do not invent inspirational, vague, or concatenated AI hashtags.
@@ -3811,6 +4401,16 @@ Vietnamese AI voice, never:
 "cảm giác lãng đãng"
 "thật tình mà nói"
 "có ai nghe em nói không"
+"có ai cũng thấy mình... không nhỉ"
+"tự hỏi..."
+"cực khó chịu luôn"
+"Đọc sách mà bụng kêu réo ầm ĩ"
+"Hôm nay anh bảo:"
+"tự dưng nghĩ"
+"đang ngắm..."
+"cạn kiệt năng lượng"
+
+Write like texting. Not like a caption writer performing relatability. Not a fake conversation scene.
 `
     : ""
 }
@@ -3825,21 +4425,37 @@ Do not explain the emotion after creating the emotion.
 
 FORMAT
 
-${FORMAT_INSTRUCTIONS[format]}
+${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "One short funny spoken line about this photo. Then stop. Do not tell a three-beat story."
+    : FORMAT_INSTRUCTIONS[format]
+}
 
 LENGTH
 
-${dna.lengthGuide}
+${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "4-12 Vietnamese words. One funny line. Stop."
+    : familyTrack === "pets"
+      ? "Usually 50-110 words. Funny pet story, then a punchline. Stop when people would laugh."
+    : dna.lengthGuide
+}
 
 HOOK RULE
 
-${dna.hookRule}
+${
+  familyTrack === "pets"
+    ? "Start with one catching ALL CAPS line about what the pet did. Then the funny story. Land a punchline people would laugh at or tag. Do not go cute."
+    : dna.hookRule
+}
 
 STRUCTURE
 
 ${
   isVietnam
-    ? `2 short paragraphs. Gen-Z spoken Vietnamese. 15-32 words. Normal case. Not ALL CAPS. Not a caption.`
+    ? vietnamCaption === "short" || vietnamCaption === "icons"
+      ? `ONE short funny spoken line about THIS photo. ${vietnamCaption === "icons" ? "Then 2-4 emojis." : "Usually no emoji."} Normal case. Not ALL CAPS.`
+      : `2 short paragraphs. Gen-Z spoken Vietnamese. 15-32 words. Normal case. Not ALL CAPS. Not a caption.`
     : `Required, not optional:
 
 One catching sentence (its own first paragraph)
@@ -3897,8 +4513,12 @@ Do not use generic AI hashtags.`
 EMOJIS
 
 ${
-  dna.allowEmojis
-    ? "Use emojis sparingly only when they genuinely fit."
+  dna.allowEmojis || vietnamTrack === "punchline" || vietnamCaption === "icons"
+    ? vietnamCaption === "icons"
+      ? "Use 2-4 emojis that fit this photo. Still a real Vietnamese line, not only stickers."
+      : vietnamTrack === "punchline"
+      ? "One emoji at the end is OK. Do not spam emojis."
+      : "Use emojis sparingly only when they genuinely fit."
     : "Do not use emojis."
 }
 
@@ -3934,7 +4554,11 @@ ${format}
 
 FORMAT INSTRUCTION
 
-${FORMAT_INSTRUCTIONS[format]}
+${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "One short funny spoken line about this photo. Then stop. Do not tell a three-beat story."
+    : FORMAT_INSTRUCTIONS[format]
+}
 
 HOOK MECHANISM
 
@@ -3966,6 +4590,11 @@ Pick ONE trend/meme/slang/news beat from the lists if it is actually current. Tw
 ${
   vietnamTrack === "flirting"
     ? "Soft hint only. Do not copy internet thả thính."
+    : vietnamTrack === "punchline"
+    ? `JOKE-THÍNH STYLE. Two lines. Setup then twist. Can say anh. One emoji OK.
+Example energy (do NOT copy the mê tín joke):
+${VIETNAM_PUNCHLINE_SEEDS[0]}
+Invent a new pun. Do not reuse mê tín / mê tôi.`
     : "Do NOT thả thính. Life post, funny and playful, plus a trend twist if it fits."
 }
 
@@ -3980,8 +4609,16 @@ Pick ONE real story. Write a Facebook fan reaction to it.
 Do not invent scores, transfers, quotes, or matches.`
     : isFamily
     ? `These are CURRENT viral family memes, TikTok sounds, and Facebook lines people are reacting to this week.
+EVERY post must be FUNNY. Laugh or tag. Not soft. Not a lecture.
 The IMAGE overlay (imageQuote) MUST feel trending and funny: a scroll-stopper that gets a laugh, a tag, or "that's my family" in one second.
-Riff a current meme format onto THIS household moment. Do not paste a news headline. The post body can stay a family story. The overlay is the bait.
+Riff a current meme format onto THIS household moment. Do not paste a news headline. The post body stays a funny family/pet story. The overlay is the bait.
+${
+  familyTrack === "pets"
+    ? "THIS POST and THIS PHOTO are the same pet story. Funny dog/cat story. Punchline. Make people laugh. Overlay is a punchline about the pet. Do not write a family dinner with a dog in the corner."
+    : familyTrack === "trending"
+      ? "THIS POST riffs a CURRENT viral family/parenting/sibling meme from the trend list into a funny household scene. Must be funny. Punchline. Do not paste the headline. No pet in the photo unless the chosen trend is clearly a pet meme."
+    : "Do not make this post about a dog or cat. No pet in the photo. Still make it funny enough to tag someone."
+}
 
 OPTIONAL CURRENT TREND
 
@@ -4035,7 +4672,9 @@ Format content exactly like a Facebook post people would actually see:
 
 ${
   isVietnam
-    ? `paragraph 1 (short chat line, NOT ALL CAPS)
+    ? vietnamCaption === "short" || vietnamCaption === "icons"
+      ? `one short funny line about THIS photo, then stop. ${vietnamCaption === "icons" ? "Add 2-4 emojis." : "Usually no emoji."}`
+      : `paragraph 1 (short chat line, NOT ALL CAPS)
 
 blank line
 
@@ -4059,19 +4698,41 @@ blank line
 #Two #ToFour #Hashtags`
 }
 
-Use real \\n\\n line breaks inside the JSON string. If the post is longer, add another short paragraph, still with blank lines between them. Never one wall of text.
+${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "One line in the JSON string. Do not pad with a second paragraph."
+    : "Use real \\n\\n line breaks inside the JSON string. If the post is longer, add another short paragraph, still with blank lines between them. Never one wall of text."
+}
 
-${dna.hookRule}
+${
+  familyTrack === "pets"
+    ? "Start with one catching ALL CAPS line about what the pet did. Then the funny story. Land a punchline people would laugh at or tag. Do not go cute or sentimental."
+    : dna.hookRule
+}
 
-${dna.lengthGuide}
+${
+  isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons")
+    ? "4-12 Vietnamese words. One funny line. Stop."
+    : familyTrack === "pets"
+      ? "Usually 50-110 words. Funny pet story, then a punchline. Stop when people would laugh."
+    : dna.lengthGuide
+}
 
 ${
   isVietnam
-    ? `Write the whole post in Vietnamese from this scene: ${vietnamScene?.beat}. Track: ${vietnamTrack}. Giọng người thật, hài, hơi giỡn. 15-32 words. Không dùng chữ luôn. ${
-        vietnamTrack === "flirting"
-          ? "Thả thính nhẹ, tinh tế, hơi giỡn. Một chi tiết nhỏ thôi. Không nói anh, không câu thính mạng, không lộ."
-          : "Đời thường hài. Tự giễu hoặc một chuyện dở nhỏ. Không thả thính. Không thơ. Không caption du lịch. Không khô."
-      } Mix in ONE current trend from the lists if it fits. No gió nhẹ, no trái tim. No ALL CAPS. No telegram. No cafe default. No hashtags. First line is NOT "ngồi bên hồ mà thấy lười ghê" or any scenery + lười stamp.`
+    ? `Write the whole post in Vietnamese from this scene: ${vietnamScene?.beat}. Track: ${vietnamTrack}. ${
+        vietnamTrack === "punchline"
+          ? "Hai câu ngắn như nhắn tin. Câu 1: Anh bảo... (ngắn, không Hôm nay anh bảo:, không dấu ngoặc dài). Câu 2 twist. Một emoji cuối. Không đang ngắm / tự dưng nghĩ. 12-22 words."
+          : vietnamCaption === "short" || vietnamCaption === "icons"
+            ? `Một câu ngắn hài về tấm này rồi dừng. ${vietnamCaption === "icons" ? "Thêm 2-4 emoji hợp cảnh." : "Thường không cần emoji."} 4-12 words.`
+            : `Giọng người thật, như nhắn tin. Hài, hơi giỡn. 12-28 words. Không dùng chữ luôn. Không cực khó chịu. Không tự hỏi / có ai cũng... không nhỉ. Không Hôm nay anh bảo. Không tự dưng nghĩ. ${
+                vietnamTrack === "flirting"
+                  ? "Thả thính nhẹ, tinh tế, hơi giỡn. Một chi tiết nhỏ thôi. Không nói anh, không câu thính mạng, không lộ."
+                  : vietnamTrack === "active"
+                    ? "Bài về tập / thể thao / đọc sách / học trong tấm này. Câu ngắn. Tự giễu chuyện dở nhỏ. Không caption truyền động lực. Không thả thính. Không bịa hội thoại với anh."
+                  : "Đời thường hài. Tự giễu hoặc một chuyện dở nhỏ. Không thả thính. Không thơ. Không caption du lịch. Không khô. Không viết văn. Không bịa anh bảo."
+              }`
+      } Bài và ảnh cùng một chỗ. ${vietnamAlbumCount > 1 ? "Nhiều tấm cùng một chỗ, cùng đồ, khác góc." : vietnamSelfie ? "Ảnh là selfie. Có thể giỡn chuyện chụp, xóa, góc mặt, nhưng vẫn ở chỗ này." : "Một chi tiết thật từ scene (ly, cát, đĩa, ghế, vợt, sách, bình nước)."} Mix in ONE current trend if it fits, unless this is punchline. No gió nhẹ, no trái tim. No ALL CAPS. No telegram. No hashtags. First line is NOT "ngồi bên hồ mà thấy lười ghê".`
     : isFootball
     ? "Write about a real current football story, especially Ronaldo or Messi: news, a match, a goal, form, a record, or related drama. Sound like a fan, not a sports desk. Do not invent facts. Hashtags like #Ronaldo #Messi #Football when they fit."
     : fb001Track === "news"
@@ -4082,12 +4743,16 @@ ${
         ? "Sound like a real owner, not a caption writer. No metaphors. No punchline to the pet. Funny because it happened."
         : familyTrack
           ? familyTrack === "old_school"
-            ? "Write one old-school family moment. Concrete scene. Funny and quite dramatic. Sitcom stakes. Do not go soft. Do not force a then-vs-now lecture."
+            ? "MUST be funny. Old-school family sitcom moment. Punchline. Do not go soft. Do not lecture. No dog/cat."
             : familyTrack === "modern"
-              ? "Write one modern family moment. Concrete scene. Funny and quite dramatic. The fight should feel huge. Do not rant about phones."
+              ? "MUST be funny. Modern family chaos. Huge stakes, punchline. Do not rant. No dog/cat."
+              : familyTrack === "pets"
+                ? "MUST be funny. Photo is the pet. Funny pet crime + punchline people would tag. Not cute. Hashtags like #FamilyPets #DogsOfFacebook #CatDad #FamilyLife when they fit."
+              : familyTrack === "trending"
+                ? "MUST be funny. Riff ONE current viral family meme into a household scene. Punchline. Tag energy. Hashtags like #FamilyLife #ParentingHumor #FamilyHumor when they fit."
               : familyTrack === "funny"
-                ? "Write one funny, quite dramatic family moment. Play it like a sitcom. The laugh is in how extra everyone was."
-                : "Compare family life in the old days with nowadays. One specific contrast. Funny and quite dramatic, not a lecture."
+                ? "MUST be funny. Sitcom family moment. The laugh is how extra everyone was. Punchline. No dog/cat."
+                : "MUST be funny. Then vs now, one contrast, punchline. Not a lecture. No dog/cat."
           : ""
 }
 
@@ -4112,13 +4777,34 @@ ${
 
 ${
   isFamily
-    ? `For this family post, imageQuote is the overlay. It MUST stop the scroll.
+    ? familyTrack === "pets"
+      ? `For this pet post, the PHOTO is the dog or cat. The POST is the funny story about that same pet. They must match.
+
+imageQuote is the overlay punchline. 4-10 words. Viral-funny. Instant laugh. Can be ALL CAPS.
+About THIS pet crime, not a recap of the whole story.
+
+imagePrompt: the dog or cat is the subject. 0-1 people, or just hands. Guilty face, stolen food, couch, trash, zoomies. No crowd. Extra faces look AI.
+
+Good overlay:
+HE KNOWS WHAT HE DID
+THE DOG ATE THE EVIDENCE
+POV: the cat chose dad
+WHO LET HIM ON THE COUCH
+This is his house now
+Not the sandwich though
+
+Bad:
+Pets are family.
+Fur baby energy.
+My best friend.
+Home is where the heart is.`
+      : `For this family post, imageQuote is the overlay. It MUST stop the scroll.
 
 4-10 words. Viral-funny. Trending meme energy. Instant laugh or reaction. Can be ALL CAPS.
 Tied to THIS household moment. Not a recap. Not a sitcom subtitle. Never soft or sentimental.
 If a current meme format is in the trend list, riff it onto this story.
 
-imagePrompt: 0-2 people only. One person, a pair, or just objects in a room. No group of three or more. No crowded table. No family portrait. Extra faces look AI.
+imagePrompt: 0-2 people only. One person, a pair, or just objects in a room. NO dog, NO cat, NO pet in this photo. This post is not about pets. No group of three or more. No crowded table. No family portrait. Extra faces look AI.
 
 Good:
 POV: mom found the leftovers
@@ -4177,7 +4863,9 @@ ${options.imageStyle.trim()}`
       generated.content?.trim() || "",
       {
         allowEmojis:
-          dna.allowEmojis,
+          dna.allowEmojis ||
+          vietnamTrack === "punchline" ||
+          vietnamCaption === "icons",
         useHashtags:
           dna.useHashtags,
         keepFirstLineCase: isVietnam,
@@ -4193,11 +4881,15 @@ ${options.imageStyle.trim()}`
    */
   const validation =
     validateGeneratedPost(content, {
-      minWords: dna.minWords,
-      maxWords: dna.maxWords,
+      minWords: vietnamCaption === "short" || vietnamCaption === "icons" ? 3 : dna.minWords,
+      maxWords: vietnamCaption === "short" || vietnamCaption === "icons" ? 18 : dna.maxWords,
       shortFunnyHook: /pet/i.test(topic),
       useHashtags: dna.useHashtags,
       casualVietnam: isVietnam,
+      familyPets: familyTrack === "pets",
+      funnyFamily: isFamily,
+      shortVietnam: isVietnam && (vietnamCaption === "short" || vietnamCaption === "icons"),
+      vietnamIcons: isVietnam && vietnamCaption === "icons",
       previousEndings: isVietnam
         ? (options?.previousPosts || []).slice(0, 6).map(normalizeEnding)
         : undefined,
@@ -4214,21 +4906,50 @@ ${options.imageStyle.trim()}`
 
     const repairSystemPrompt = isVietnam
       ? `
-Rewrite this Vietnamese Facebook post in short Gen-Z chat. Human, funny, a little playful. Like texting a friend. Not a caption. Not a poet. Not dry.
+Rewrite this Vietnamese Facebook post in short Gen-Z chat. Like texting a friend in 10 seconds. Human, funny, a little playful. Not a poet. Not a caption writer. Not dry.
 
 Fix this problem:
 
 ${validation.reason}
 
 Rules:
-- Entirely Vietnamese. Youth chat. Funny, playful. Catch a trend if one is listed. No luôn. No ghê luôn. Normal case.
-- 2 short paragraphs. 15-32 words. Cut the rest.
+- Entirely Vietnamese. Youth chat. Funny, playful. Catch a trend if one is listed. No luôn. No ghê luôn. No cực khó chịu. No tự hỏi. No có ai cũng... không nhỉ. Normal case.
+- ${
+  vietnamCaption === "short" || vietnamCaption === "icons"
+    ? `ONE short funny line about this photo. ${vietnamCaption === "icons" ? "Include 2-4 emojis." : "Usually no emoji."} 4-12 words. No second paragraph.`
+    : "2 short paragraphs. 12-28 words. Concrete beat, then stop. Cut the rest."
+}
 - No ALL CAPS first line. No telegram (ĐÓI. Tan làm. Về.).
 - Do not open with ngồi bên hồ / mà thấy lười ghê / đứng bên + place. Drop the scenery announcement. Start with a thought or hassle.
-- Banned: ngọt ngào, gió nhẹ, trái tim, ký ức, lãng đãng, lấp lánh, thật tình mà nói, biết đâu, chỉ cần anh, mỏi lòng, ánh mắt.
-- Track is ${vietnamTrack}. ${vietnamTrack === "flirting" ? "Soft hint only. No ăn cơm chưa, no wifi, no anh seen, no thả thính." : "Do not thả thính."}
+- Banned: ngọt ngào, gió nhẹ, trái tim, ký ức, lãng đãng, lấp lánh, thật tình mà nói, biết đâu, chỉ cần anh, mỏi lòng, ánh mắt, cực khó chịu luôn, tự hỏi, có ai cũng, không nhỉ, Hôm nay anh bảo, tự dưng nghĩ, đang ngắm, cạn kiệt, năng lượng, long quotation marks.
+- Track is ${vietnamTrack}. ${vietnamTrack === "punchline" ? "Two short spoken lines only. Anh bảo X. Twist. No Hôm nay anh bảo:. No long quotes. No đang ngắm / tự dưng nghĩ. New pun. One emoji OK. Do not copy mê tín." : vietnamTrack === "flirting" ? "Soft hint only. No ăn cơm chưa, no wifi, no anh seen, no thả thính. No anh dialogue." : vietnamTrack === "active" ? "Sports, reading, or study in THIS photo. Self-tease. Short chat. No gym motivation. No anh dialogue. No thả thính." : "Do not thả thính. Do not invent anh bảo."}
 - Do not end with a lone Thôi.
 - Return only the revised post.
+`
+      : isFamily
+      ? `
+Rewrite this Facebook family post so it is FUNNY. Sitcom energy. People should laugh or tag someone.
+
+Fix this problem:
+
+${validation.reason}
+
+Rules:
+- Natural American English.
+- Start with one catching ALL CAPS line on its own first line that is already funny.
+- Concrete household or pet chaos. Small thing, huge stakes.
+- End on a punchline. Not soft. Not blessed. Not a lecture.
+- Track is ${familyTrack}. ${
+  familyTrack === "pets"
+    ? "Funny dog/cat crime + punchline. Photo is the pet."
+    : familyTrack === "trending"
+      ? "Riff a current family meme into a funny scene. Punchline."
+      : "Funny family sitcom moment. Punchline."
+}
+- Short paragraphs with blank lines. 55-110 words.
+- End with 2-4 specific hashtags.
+- No #Blessed #GoodVibesOnly #FamilyIsEverything.
+- Return only the revised Facebook post.
 `
       : `
 Rewrite the Facebook post below so it has a real hook, an actual point or story, and a payoff.
@@ -4246,8 +4967,16 @@ Rules:
 - The rest of the post is normal sentence case.
 - Keep hook → story/point → payoff. One relatable sentence is not enough.
 - Use short paragraphs with a blank line between them. Do not return one wall of text.
-- ${dna.hookRule}
-- ${dna.lengthGuide}
+- ${
+  familyTrack === "pets"
+    ? "This post's photo is the pet. Keep it a funny dog or cat story plus a punchline. Make people laugh. Not cute. Not a family dinner with a dog in the corner."
+    : dna.hookRule
+}
+- ${
+  familyTrack === "pets"
+    ? "Usually 50-110 words. Story then punchline."
+    : dna.lengthGuide
+}
 - End with 2-4 specific hashtags on their own last line.
 - Do not use generic AI hashtags like #LifeChangingMoment, #Blessed, or #GoodVibesOnly.
 - Remove generic AI phrases.
@@ -4312,7 +5041,9 @@ Rules:
             repaired,
             {
               allowEmojis:
-                dna.allowEmojis,
+                dna.allowEmojis ||
+                vietnamTrack === "punchline" ||
+                vietnamCaption === "icons",
                 useHashtags:
                   dna.useHashtags,
                 keepFirstLineCase: isVietnam,
@@ -4376,21 +5107,29 @@ Rules:
     dna.imageStrategy,
 
     vietnamScene
-      ? `New photograph of the SAME woman as the attached reference, but a DIFFERENT camera angle and crop. Assigned scene: ${vietnamScene.photo}. ${vietnamAngle ? `Camera: ${vietnamAngle.photo}` : ""} Same hair, skin, and age. Do not copy the reference pose, bikini, or frontal face crop. Change clothes to this scene. Pretty and a bit attractive. Fully clothed. Not sexy.`
+      ? vietnamSelfie
+        ? `New iPhone SELFIE of the SAME woman as the attached reference. Assigned scene: ${vietnamScene.photo}. ${vietnamAngle ? `Camera: ${vietnamAngle.photo}` : "Front camera, arm's length."} Same hair, skin, and age. She is holding the phone. Looking toward the camera is OK. New clothes for this place. Fully clothed. Not sexy. Real slightly imperfect phone selfie, not a studio portrait, not a render.`
+        : `New photograph of the SAME woman as the attached reference, but a DIFFERENT camera angle and crop. Assigned scene: ${vietnamScene.photo}. ${vietnamAngle ? `Camera: ${vietnamAngle.photo}` : ""} Same hair, skin, and age. Do not copy the reference pose, bikini, or frontal face crop. Change clothes to this scene. Fully clothed. Not sexy. Candid phone photo, not a render.`
       : "",
 
     options?.referenceImagePath
-      ? "The attached image is identity only. Same person. New pose. New angle. Do not invent a different woman, and do not recreate a frontal portrait of that face."
+      ? vietnamSelfie
+        ? "The attached image is identity only. Same person. This post is a selfie: she may look at the camera. New outfit, new place. Do not copy the reference background, pose, or bikini."
+        : "The attached image is identity only. Same person. New pose. New angle. Do not invent a different woman, and do not recreate a frontal portrait of that face."
       : "",
 
     isVietnam
-      ? "Beautiful-girl setting only: resort, beach, rooftop, flowers, hotel, lantern street, lake, pretty cafe. Attractive and flattering. Fully clothed. NO bikini, lingerie, wet look, cleavage close-up, or sexual pose. NEVER wet market, fish market, supermarket aisle, convenience store, plastic street stall, laundry, city bus, or grimy kitchen."
+      ? vietnamSelfie
+        ? "Familiar real settings: cafe, restaurant, beach, resort, hotel, park, gym, yoga studio, bookstore, sports court. This is a real iPhone selfie. Natural skin, slightly imperfect. NOT cinematic, NOT CGI, NOT a beauty-studio face. Fully clothed. Modest sportswear when active. NO bikini, lingerie, wet look, or sexual pose."
+        : "Familiar real settings only: cafe, restaurant, beach, resort, hotel breakfast, park, gym, yoga studio, bookstore, study desk, sports court. Candid iPhone look. Natural skin, real furniture, slightly imperfect. NOT cinematic, NOT editorial, NOT CGI. Fully clothed. Modest sportswear when active. NO bikini, lingerie, wet look, or sexual pose. NEVER wet market, supermarket, laundry, or bus."
       : generated.imagePrompt?.trim() ||
         `A candid everyday moment related to ${topic}`,
 
     isVietnam
-      ? "Keep the assigned pretty scene. Match the post mood only. Do not invent a market, supermarket, kitchen, laundry, or bus to match a caption."
-      : "The image must match the exact situation in the Facebook post.",
+      ? `The photograph must match this caption: "${content.replace(/\s+/g, " ").trim()}". Same place, same moment. If the post mentions a drink, food, sand, pool, or street, that thing is in the frame. Do not show a different location.`
+      : familyTrack === "pets"
+        ? `The photograph must match this caption: "${content.replace(/\s+/g, " ").trim()}". The dog or cat in the post is in the photo doing that thing. Do not show a family scene without the pet.`
+        : "The image must match the exact situation in the Facebook post.",
 
     "Natural human behavior and believable surroundings.",
 
@@ -4401,13 +5140,17 @@ Rules:
     isVietnam
       ? "If the reference photo has text, do not copy it. The new photo is clean: only the woman and the scene."
       : isFamily
-      ? "Maximum TWO people in the frame, preferably one person or no faces: hands, a phone, leftovers, an empty chair, a room after the fight. No group photo, no crowded dinner, no four kids at the table. Too many faces looks AI-generated."
+      ? familyTrack === "pets"
+        ? "The dog or cat from this post MUST be the subject of the photo. 0-1 people or just hands. Guilty pet, stolen food, couch, trash. The overlay is a punchline about this pet. No group photo. Too many faces looks AI-generated."
+        : "Maximum TWO people in the frame, preferably one person or no faces: hands, a phone, leftovers, an empty chair, a room after the fight. NO dog, NO cat, NO pet in this photo. This post is not about pets. No group photo, no crowded dinner, no four kids at the table. Too many faces looks AI-generated."
       : "",
 
     isVietnam
       ? ""
       : isFamily
-      ? "The overlay text must be a SHORT viral-funny line. Trending meme energy. Instant laugh or reaction. Huge, easy to read, correctly spelled. Not a recap. Not a sitcom subtitle. No sentimental line. No extra slogans."
+      ? familyTrack === "pets"
+        ? "The overlay text must be a SHORT punchline about this pet. Instant laugh. Huge, easy to read, correctly spelled. Not cute. Not sentimental. No extra slogans."
+        : "The overlay text must be a SHORT viral-funny line. Trending meme energy. Instant laugh or reaction. Huge, easy to read, correctly spelled. Not a recap. Not a sitcom subtitle. No sentimental line. No extra slogans."
       : "The overlay text must create curiosity, a laugh, or an emotional hit. It must not spoil the whole post. Large, easy to read, correctly spelled, no extra slogans.",
 
     isVietnam
@@ -4423,16 +5166,116 @@ Rules:
     .filter(Boolean)
     .join(". ");
 
-  const [imagePath, comment] = await Promise.all([
-    generateImage(imagePrompt, options?.referenceImagePath),
-    commentPromise,
-  ]);
+  const captionText = content.replace(/\s+/g, " ").trim();
+
+  async function generateVietnamShot(
+    angle: (typeof VIETNAM_ANGLES)[number],
+    followUp: boolean,
+    shotIndex: number,
+    shotCount: number,
+    referencePath?: string,
+  ) {
+    const selfie = /selfie/.test(angle.id);
+    const prompt = [
+      dna.imageStrategy,
+      vietnamOutfit,
+      followUp
+        ? `Follow-up shot ${shotIndex + 1} of ${shotCount} from the SAME outing. The attached photo is shot 1. SAME woman, SAME clothes, SAME color outfit, SAME place. Only a new camera angle and a small pose change. Do not change the dress, hair length, or location.`
+        : `${
+            selfie
+              ? `New iPhone SELFIE of the SAME woman as the attached reference. Assigned scene: ${vietnamScene?.photo}. Camera: ${angle.photo}. Same hair, skin, and age. She is holding the phone. Looking toward the camera is OK.`
+              : `New photograph of the SAME woman as the attached reference, but a DIFFERENT camera angle and crop. Assigned scene: ${vietnamScene?.photo}. Camera: ${angle.photo}. Same hair, skin, and age. Do not copy the reference pose, bikini, or frontal face crop.`
+          } Keep ${vietnamOutfit} for every shot in this dump. Fully clothed. Not sexy. Real slightly imperfect phone photo, not a render.`,
+      followUp
+        ? "The attached photo is identity AND outfit AND place. Copy her clothes and the location. New angle only."
+        : selfie
+          ? "The attached image is identity only. Same person. This shot is a selfie: she may look at the camera. New outfit for this place, then freeze that outfit. Do not copy the reference background, pose, or bikini."
+          : "The attached image is identity only. Same person. New pose. New angle. Do not invent a different woman.",
+      shotCount > 1 && !followUp
+        ? `This is shot 1 of ${shotCount}. Remember this exact outfit and this exact place for the other shots.`
+        : "",
+      selfie
+        ? "Familiar real settings. Real iPhone selfie. Natural skin. NOT cinematic, NOT CGI, NOT a beauty-studio face. Fully clothed. Modest sportswear when active. NO bikini."
+        : "Familiar real settings only: cafe, restaurant, beach, resort, hotel breakfast, park, gym, yoga studio, bookstore, study desk, sports court. Candid iPhone look. Natural skin. NOT cinematic, NOT CGI. Fully clothed. Modest sportswear when active. NO bikini. NEVER wet market, supermarket, laundry, or bus.",
+      `The photograph must match this caption: "${captionText}". Same place, same moment. Do not show a different location.`,
+      "NO text on the photograph. No quote, no caption, no overlay, no letters.",
+      "If the reference photo has text, do not copy it.",
+      "No logos. No watermarks. No collage. No split screen. No UI.",
+    ]
+      .filter(Boolean)
+      .join(". ");
+
+    return generateImage(prompt, referencePath);
+  }
+
+  let imagePath: string | undefined;
+  let imagePaths: string[] | undefined;
+  let comment: string;
+
+  if (isVietnam && vietnamAlbumAngles.length) {
+    log(
+      "INFO",
+      `${options?.accountName || topic} album: ${vietnamAlbumAngles
+        .map((item) => item.id)
+        .join(" + ")} / ${vietnamOutfit}`,
+    );
+
+    const paths: string[] = [];
+
+    for (let i = 0; i < vietnamAlbumAngles.length; i += 1) {
+      const angle = vietnamAlbumAngles[i];
+      const referencePath =
+        i === 0
+          ? options?.referenceImagePath
+          : paths[0] || options?.referenceImagePath;
+
+      try {
+        const made = await generateVietnamShot(
+          angle,
+          i > 0,
+          i,
+          vietnamAlbumAngles.length,
+          referencePath,
+        );
+
+        if (made) {
+          paths.push(made);
+        }
+      } catch (error) {
+        log(
+          "WARN",
+          `${options?.accountName || topic} album shot ${i + 1} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`.slice(0, 240),
+        );
+
+        if (!paths.length) {
+          throw error;
+        }
+
+        break;
+      }
+    }
+
+    imagePaths = paths;
+    imagePath = paths[0];
+    comment = await commentPromise;
+  } else {
+    const generatedPair = await Promise.all([
+      generateImage(imagePrompt, options?.referenceImagePath),
+      commentPromise,
+    ]);
+
+    imagePath = generatedPair[0];
+    comment = generatedPair[1];
+  }
 
   log("INFO", `Comment ready: "${comment}"`);
 
   return {
     content,
     imagePath,
+    imagePaths,
     comment,
   };
 }

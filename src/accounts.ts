@@ -14,6 +14,7 @@ export type AccountConfig = {
   pillars?: string[];
   emotions?: string[];
   intervalHours?: number;
+  postInstagram?: boolean;
 };
 
 const accountsDir = path.resolve("accounts");
@@ -57,6 +58,7 @@ export function loadAccounts(): AccountConfig[] {
         Number(parsed.intervalHours) > 0
           ? Number(parsed.intervalHours)
           : 1,
+      postInstagram: parsed.postInstagram === true,
     };
   });
 

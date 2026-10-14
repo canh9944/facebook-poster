@@ -1,3 +1,4 @@
+import path from "node:path";
 import { getPage, openFacebook, startBrowser, stopBrowser } from "./browser.js";
 import { log } from "./db.js";
 
@@ -371,7 +372,14 @@ async function waitForEnabledPostButton(page: any, timeoutMs = 30000) {
   return null;
 }
 
-async function attachImage(page: any, imagePath: string) {
+async function attachImage(page: any, imagePath: string | string[]) {
+  const files = (Array.isArray(imagePath) ? imagePath : [imagePath])
+    .map((file) => path.resolve(file));
+
+  if (!files.length) {
+    throw new Error("No image file to attach.");
+  }
+
   const dialog = composerDialog(page).last();
   const scope = (await dialog.isVisible().catch(() => false))
     ? dialog
@@ -404,7 +412,13 @@ async function attachImage(page: any, imagePath: string) {
     }
 
     try {
-      await input.setInputFiles(imagePath);
+      if (files.length > 1) {
+        await input.evaluate((el: HTMLInputElement) => {
+          el.setAttribute("multiple", "");
+        });
+      }
+
+      await input.setInputFiles(files);
       uploaded = true;
       break;
     } catch {
@@ -414,7 +428,14 @@ async function attachImage(page: any, imagePath: string) {
 
   if (!uploaded) {
     const fallback = page.locator('input[type="file"]').last();
-    await fallback.setInputFiles(imagePath);
+
+    if (files.length > 1) {
+      await fallback.evaluate((el: HTMLInputElement) => {
+        el.setAttribute("multiple", "");
+      }).catch(() => {});
+    }
+
+    await fallback.setInputFiles(files);
   }
 
   const previewOk = await scope
@@ -466,7 +487,7 @@ async function attachImage(page: any, imagePath: string) {
     }
   }
 
-  log("INFO", "Photo attached in composer");
+  log("INFO", files.length > 1 ? `${files.length} photos attached in composer` : "Photo attached in composer");
   await clickPhotoNextIfNeeded(page);
 }
 
@@ -1637,7 +1658,12 @@ async function commentAndPinOnLatestPost(
 
     const leftover = await commentBoxValue(box);
 
-    if (leftover && leftover.includes(text.slice(0, 10))) {
+    if (!leftover) {
+      appeared = true;
+      break;
+    }
+
+    if (leftover.includes(text.slice(0, 10))) {
       await clickCommentSend(page, box);
       await page.keyboard.press("Control+Enter");
       await page.waitForTimeout(300);
@@ -1683,7 +1709,7 @@ async function commentAndPinOnLatestPost(
 
 export async function publishPost(
   content: string,
-  imagePath?: string,
+  imagePath?: string | string[],
   profileId?: string,
   comment?: string,
 ) {
@@ -1739,7 +1765,7 @@ export async function publishPost(
 
   await typeIntoComposer(page, composer, content);
 
-  if (!imagePath) {
+  if (!imagePath || (Array.isArray(imagePath) && !imagePath.length)) {
     throw new Error("No image was generated for this post.");
   }
 

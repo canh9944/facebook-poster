@@ -177,6 +177,7 @@ app.post("/api/generate", async (req, res) => {
     res.json({
       content: generated.content,
       imagePath: generated.imagePath ?? null,
+      imagePaths: generated.imagePaths ?? null,
     });
   } catch (error) {
     res.status(500).json({
@@ -188,7 +189,10 @@ app.post("/api/generate", async (req, res) => {
 app.post("/api/test-publish", async (req, res) => {
   try {
     let content = req.body?.content;
-    let imagePath = req.body?.imagePath as string | undefined;
+    let imagePath = (req.body?.imagePaths || req.body?.imagePath) as
+      | string
+      | string[]
+      | undefined;
 
     if (!content) {
       const generated = await generatePost({
@@ -196,7 +200,9 @@ app.post("/api/test-publish", async (req, res) => {
         forceImage: true,
       });
       content = generated.content;
-      imagePath = generated.imagePath;
+      imagePath = generated.imagePaths?.length
+        ? generated.imagePaths
+        : generated.imagePath;
     }
 
     await publishPost(content, imagePath);

@@ -141,6 +141,14 @@ export async function startBrowser(profileId?: string) {
   }
 }
 
+export function getContext() {
+  if (context) {
+    return context;
+  }
+
+  throw new Error("Browser is not started");
+}
+
 export function getPage() {
   if (page && !page.isClosed()) {
     return page;
